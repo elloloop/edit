@@ -1,0 +1,1836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>edit — A TUI code editor for the age of AI agents</title>
+  <meta name="description" content="Syntax highlighting, git diff review, fuzzy file picker, and a Claude Code-like command bar. One Rust binary that runs in your terminal." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="theme-vars.css" />
+  <script src="theme.js"></script>
+  <style>
+    /* ========================================
+       Reset & Base
+       ======================================== */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--ed-bg);
+      color: var(--ed-text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    code, .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+    img { max-width: 100%; display: block; }
+
+    .container {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 28px;
+    }
+
+    /* ========================================
+       Typography
+       ======================================== */
+    h1 {
+      font-size: clamp(2.75rem, 7vw, 4rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.08;
+    }
+
+    h2 {
+      font-size: clamp(1.75rem, 4vw, 2.75rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }
+
+    .section-label {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--ed-accent);
+      margin-bottom: 16px;
+    }
+
+    .section-desc {
+      font-size: 1.05rem;
+      color: var(--ed-text-secondary);
+      line-height: 1.7;
+      max-width: 640px;
+      margin: 16px auto 0;
+    }
+
+    .gradient {
+      background: linear-gradient(135deg, var(--ed-accent) 0%, #a78bfa 50%, #38bdf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ========================================
+       Navigation
+       ======================================== */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      background: color-mix(in srgb, var(--ed-bg) 80%, transparent);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--ed-border-subtle);
+      z-index: 1000;
+    }
+
+    .nav-logo {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.1rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .nav-logo .prompt { color: var(--ed-accent); }
+
+    .nav-links {
+      display: flex;
+      list-style: none;
+      gap: 32px;
+    }
+
+    .nav-links a {
+      font-size: 0.875rem;
+      color: var(--ed-text-secondary);
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--ed-text); }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .nav-cta {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 20px;
+      background: var(--ed-accent);
+      color: var(--ed-accent-contrast);
+      font-size: 0.875rem;
+      font-weight: 600;
+      border-radius: 8px;
+      transition: background 0.2s, transform 0.2s;
+    }
+
+    .nav-cta:hover {
+      background: var(--ed-accent-hover);
+      transform: translateY(-1px);
+    }
+
+    /* Theme picker */
+    .tp-wrapper {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .tp-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid var(--ed-border);
+      background: var(--dot-color);
+      cursor: pointer;
+      transition: border-color 0.2s, transform 0.2s;
+      padding: 0;
+    }
+
+    .tp-dot:hover { transform: scale(1.2); }
+    .tp-dot.active { border-color: var(--ed-text); box-shadow: 0 0 8px color-mix(in srgb, var(--dot-color) 40%, transparent); }
+
+    /* ========================================
+       Hero
+       ======================================== */
+    .hero {
+      text-align: center;
+      padding: 180px 28px 100px;
+      position: relative;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1000px;
+      height: 700px;
+      background: radial-gradient(ellipse, color-mix(in srgb, var(--ed-accent) 6%, transparent) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 20px;
+      background: var(--ed-bg-tertiary);
+      border: 1px solid var(--ed-border);
+      border-radius: 100px;
+      font-size: 0.8125rem;
+      color: var(--ed-text-secondary);
+      margin-bottom: 32px;
+    }
+
+    .hero-badge .pulse {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--ed-success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .hero h1 { margin-bottom: 24px; position: relative; }
+
+    .hero .subtitle {
+      font-size: 1.125rem;
+      color: var(--ed-text-secondary);
+      max-width: 680px;
+      margin: 0 auto 52px;
+      line-height: 1.7;
+    }
+
+    .install-highlight {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      background: var(--ed-bg-secondary);
+      border: 1px solid var(--accent-border);
+      border-radius: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.875rem;
+      margin-bottom: 12px;
+      box-shadow: 0 0 40px color-mix(in srgb, var(--ed-accent) 8%, transparent);
+      max-width: 100%;
+      overflow-x: auto;
+    }
+
+    .install-highlight .dollar { color: var(--ed-accent); user-select: none; }
+
+    .install-highlight .copy-btn {
+      padding: 6px 14px;
+      background: var(--ed-accent);
+      color: var(--ed-accent-contrast);
+      border: none;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+    }
+
+    .install-highlight .copy-btn:hover { opacity: 0.85; }
+
+    .platform-note {
+      font-size: 0.8125rem;
+      color: var(--ed-text-tertiary);
+      margin-bottom: 40px;
+    }
+
+    .hero-buttons {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 28px;
+      background: var(--ed-accent);
+      color: var(--ed-accent-contrast);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      border-radius: 10px;
+      transition: background 0.2s, transform 0.2s;
+    }
+
+    .btn-primary:hover { background: var(--ed-accent-hover); transform: translateY(-1px); }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 28px;
+      background: var(--ed-bg-tertiary);
+      color: var(--ed-text);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      border: 1px solid var(--ed-border);
+      border-radius: 10px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .btn-secondary:hover { border-color: var(--ed-text-tertiary); transform: translateY(-1px); }
+
+    .btn-icon {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+
+    /* ========================================
+       Terminal Demo
+       ======================================== */
+    .demo-section {
+      padding: 0 28px 120px;
+    }
+
+    .terminal {
+      max-width: 800px;
+      margin: 0 auto;
+      background: var(--ed-bg-secondary);
+      border: 1px solid var(--ed-border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 32px 64px rgba(0,0,0,0.5), 0 0 80px color-mix(in srgb, var(--ed-accent) 5%, transparent);
+    }
+
+    .terminal-chrome {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: var(--ed-bg-tertiary);
+      border-bottom: 1px solid var(--ed-border);
+    }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .terminal-dot.red { background: #ff5f57; }
+    .terminal-dot.yellow { background: #febc2e; }
+    .terminal-dot.green { background: #28c840; }
+
+    .terminal-title {
+      flex: 1;
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--ed-text-tertiary);
+      font-family: 'Inter', sans-serif;
+    }
+
+    .terminal-body {
+      padding: 20px 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8125rem;
+      line-height: 1.8;
+      min-height: 340px;
+    }
+
+    .terminal-body .line {
+      opacity: 0;
+      animation: termFadeIn 0.3s ease forwards;
+    }
+
+    @keyframes termFadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .t-prompt { color: var(--ed-accent); user-select: none; }
+    .t-cmd { color: var(--ed-text); font-weight: 500; }
+    .t-arg { color: var(--ed-warning); }
+    .t-ok { color: var(--ed-success); }
+    .t-info { color: var(--ed-text-secondary); }
+    .t-dim { color: var(--ed-text-tertiary); font-style: italic; }
+    .t-link { color: #38bdf8; }
+    .t-stat { color: #a78bfa; }
+
+    /* ========================================
+       Section Shared
+       ======================================== */
+    .section {
+      padding: 100px 28px;
+      border-top: 1px solid var(--ed-border-subtle);
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 64px;
+    }
+
+    /* ========================================
+       Why Section
+       ======================================== */
+    .why-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      max-width: 960px;
+      margin: 0 auto 48px;
+    }
+
+    .why-card {
+      background: var(--ed-bg-secondary);
+      border: 1px solid var(--ed-border);
+      border-radius: 16px;
+      padding: 36px 32px;
+      position: relative;
+      transition: border-color 0.3s;
+    }
+
+    .why-card:hover { border-color: var(--ed-text-tertiary); }
+
+    .why-card::before {
+      content: '\201C';
+      position: absolute;
+      top: 16px;
+      left: 24px;
+      font-size: 3rem;
+      color: var(--ed-accent);
+      opacity: 0.2;
+      line-height: 1;
+      font-family: Georgia, serif;
+    }
+
+    .why-card blockquote {
+      font-size: 0.9375rem;
+      color: var(--ed-text-secondary);
+      line-height: 1.7;
+      margin-bottom: 16px;
+    }
+
+    .why-card .source {
+      font-size: 0.75rem;
+      color: var(--ed-text-tertiary);
+      font-weight: 500;
+    }
+
+    .why-cta {
+      text-align: center;
+      font-size: 1.05rem;
+      color: var(--ed-text-secondary);
+      line-height: 1.7;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .why-cta strong { color: var(--ed-accent); }
+
+    /* ========================================
+       Features Section
+       ======================================== */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      max-width: 1100px;
+      margin: 0 auto;
+      background: var(--ed-border-subtle);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .feature-card {
+      background: var(--ed-bg-secondary);
+      padding: 36px 32px;
+      transition: background 0.3s;
+    }
+
+    .feature-card:hover { background: var(--ed-bg-tertiary); }
+
+    .feature-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 11px;
+      background: var(--accent-subtle);
+      border: 1px solid var(--accent-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .feature-icon svg {
+      width: 20px;
+      height: 20px;
+      stroke: var(--ed-accent);
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .feature-card h3 {
+      font-size: 1.0625rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+      letter-spacing: -0.01em;
+    }
+
+    .feature-card p {
+      font-size: 0.875rem;
+      color: var(--ed-text-secondary);
+      line-height: 1.65;
+    }
+
+    /* ========================================
+       Audience Section
+       ======================================== */
+    .audience-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    .audience-grid .full { grid-column: 1 / -1; }
+
+    .audience-card {
+      background: var(--ed-bg-secondary);
+      border: 1px solid var(--ed-border);
+      border-radius: 16px;
+      padding: 36px 32px;
+      transition: border-color 0.3s;
+    }
+
+    .audience-card:hover { border-color: var(--ed-text-tertiary); }
+
+    .audience-tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--ed-accent);
+      background: var(--accent-subtle);
+      border: 1px solid var(--accent-border);
+      padding: 4px 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+
+    .audience-card h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: -0.02em;
+    }
+
+    .audience-card p {
+      font-size: 0.9375rem;
+      color: var(--ed-text-secondary);
+      line-height: 1.7;
+    }
+
+    /* ========================================
+       Workflow Section
+       ======================================== */
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    .step-card {
+      background: var(--ed-bg-secondary);
+      border: 1px solid var(--ed-border);
+      border-radius: 16px;
+      padding: 32px 24px;
+      text-align: center;
+    }
+
+    .step-num {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--accent-subtle);
+      color: var(--ed-accent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .step-card h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .step-code {
+      background: var(--ed-bg);
+      border: 1px solid var(--ed-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--ed-text-secondary);
+      text-align: left;
+    }
+
+    .step-code .dollar { color: var(--ed-accent); user-select: none; }
+
+    /* ========================================
+       Preview Section
+       ======================================== */
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .preview-card {
+      background: var(--ed-bg-secondary);
+      border: 1px solid var(--ed-border);
+      border-radius: 16px;
+      overflow: hidden;
+      transition: border-color 0.3s, transform 0.3s;
+    }
+
+    .preview-card:hover {
+      border-color: var(--ed-text-tertiary);
+      transform: translateY(-2px);
+    }
+
+    .preview-mock {
+      background: var(--ed-bg);
+      padding: 20px;
+      border-bottom: 1px solid var(--ed-border);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.6875rem;
+      line-height: 1.7;
+      min-height: 200px;
+      overflow: hidden;
+    }
+
+    .preview-info {
+      padding: 20px 24px;
+    }
+
+    .preview-info h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .preview-info p {
+      font-size: 0.8125rem;
+      color: var(--ed-text-secondary);
+      line-height: 1.6;
+    }
+
+    /* Mock UI elements */
+    .mock-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: var(--ed-bg-tertiary);
+      border: 1px solid var(--ed-border);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      font-size: 0.6875rem;
+    }
+
+    .mock-tab { padding: 3px 10px; border-radius: 4px; color: var(--ed-text-tertiary); }
+    .mock-tab.active { background: var(--ed-bg); color: var(--ed-text); border: 1px solid var(--ed-border); }
+
+    .mock-line {
+      display: flex;
+      gap: 12px;
+    }
+
+    .mock-ln { color: var(--ed-text-tertiary); min-width: 24px; text-align: right; user-select: none; }
+    .mock-add { color: var(--ed-success); }
+    .mock-del { color: var(--ed-error); }
+    .mock-ctx { color: var(--ed-text-secondary); }
+
+    .mock-sidebar-item {
+      padding: 3px 8px;
+      color: var(--ed-text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mock-sidebar-item.active {
+      background: color-mix(in srgb, var(--ed-accent) 12%, transparent);
+      color: var(--ed-text);
+      border-radius: 4px;
+    }
+
+    .mock-cmd-bar {
+      margin-top: 8px;
+      padding: 6px 10px;
+      background: var(--ed-bg-tertiary);
+      border: 1px solid var(--ed-border);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mock-prompt { color: var(--ed-success); }
+
+    .mock-stack-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border: 1px solid var(--ed-border);
+      border-radius: 8px;
+      margin-bottom: 6px;
+    }
+
+    .mock-stack-ok { color: var(--ed-success); }
+    .mock-stack-draft { color: var(--ed-text-tertiary); }
+
+    .mock-ci-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+    }
+
+    /* ========================================
+       FAQ Section
+       ======================================== */
+    .faq-container {
+      max-width: 720px;
+      margin: 0 auto;
+      border: 1px solid var(--ed-border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .faq-item {
+      border-bottom: 1px solid var(--ed-border);
+    }
+
+    .faq-item:last-child { border-bottom: none; }
+
+    .faq-question {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 28px;
+      background: var(--ed-bg-secondary);
+      cursor: pointer;
+      transition: background 0.2s;
+      border: none;
+      width: 100%;
+      text-align: left;
+      font-family: inherit;
+      color: inherit;
+      font-size: 0.9375rem;
+      font-weight: 600;
+    }
+
+    .faq-question:hover { background: var(--ed-bg-tertiary); }
+
+    .faq-toggle {
+      width: 20px;
+      height: 20px;
+      stroke: var(--ed-text-tertiary);
+      fill: none;
+      stroke-width: 2;
+      transition: transform 0.3s;
+      flex-shrink: 0;
+    }
+
+    .faq-item.open .faq-toggle { transform: rotate(45deg); }
+
+    .faq-answer {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+
+    .faq-item.open .faq-answer { max-height: 250px; }
+
+    .faq-answer-inner {
+      padding: 0 28px 20px;
+      background: var(--ed-bg-secondary);
+      font-size: 0.875rem;
+      color: var(--ed-text-secondary);
+      line-height: 1.7;
+    }
+
+    .faq-answer-inner code {
+      background: var(--ed-bg-tertiary);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.8125rem;
+    }
+
+    /* ========================================
+       Testimonials
+       ======================================== */
+    .testimonials-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    .testimonial-card {
+      background: var(--ed-bg-secondary);
+      border: 1px solid var(--ed-border);
+      border-radius: 14px;
+      padding: 32px 28px;
+    }
+
+    .testimonial-stars {
+      color: #fbbf24;
+      letter-spacing: 2px;
+      margin-bottom: 16px;
+      font-size: 0.875rem;
+    }
+
+    .testimonial-text {
+      font-size: 0.875rem;
+      color: var(--ed-text-secondary);
+      line-height: 1.7;
+      margin-bottom: 20px;
+    }
+
+    .testimonial-author {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .testimonial-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--ed-accent), #a78bfa);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--ed-accent-contrast);
+    }
+
+    .testimonial-name {
+      font-size: 0.8125rem;
+      font-weight: 600;
+    }
+
+    .testimonial-role {
+      font-size: 0.75rem;
+      color: var(--ed-text-tertiary);
+    }
+
+    /* ========================================
+       Stats
+       ======================================== */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      background: linear-gradient(180deg, var(--ed-text), var(--ed-text-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .stat-label {
+      font-size: 0.8125rem;
+      color: var(--ed-text-tertiary);
+      margin-top: 4px;
+    }
+
+    /* ========================================
+       Install CTA
+       ======================================== */
+    .install-section {
+      padding: 100px 28px;
+      border-top: 1px solid var(--ed-border-subtle);
+    }
+
+    .install-block {
+      max-width: 680px;
+      margin: 0 auto;
+      background: var(--ed-bg-secondary);
+      border: 1px solid var(--ed-border);
+      border-radius: 20px;
+      padding: 64px 48px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .install-block::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent 0%, var(--ed-accent) 30%, #a78bfa 70%, transparent 100%);
+    }
+
+    .install-block h2 {
+      margin-bottom: 12px;
+      font-size: clamp(1.5rem, 3vw, 2rem);
+    }
+
+    .install-block .section-desc {
+      margin: 0 auto 36px;
+    }
+
+    .install-cmd {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      background: var(--ed-bg);
+      border: 1px solid var(--accent-border);
+      border-radius: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8125rem;
+      box-shadow: 0 0 40px color-mix(in srgb, var(--ed-accent) 8%, transparent);
+      margin-bottom: 16px;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+
+    .install-cmd .dollar { color: var(--ed-accent); user-select: none; }
+
+    .install-cmd .copy-btn {
+      padding: 6px 14px;
+      background: var(--ed-accent);
+      color: var(--ed-accent-contrast);
+      border: none;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      transition: opacity 0.2s;
+      white-space: nowrap;
+    }
+
+    .install-cmd .copy-btn:hover { opacity: 0.85; }
+
+    /* ========================================
+       Footer
+       ======================================== */
+    footer {
+      border-top: 1px solid var(--ed-border-subtle);
+      padding: 48px 28px;
+    }
+
+    .footer-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .footer-logo {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .footer-logo .prompt { color: var(--ed-accent); }
+
+    .footer-meta {
+      font-size: 0.8125rem;
+      color: var(--ed-text-tertiary);
+      margin-top: 4px;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 28px;
+    }
+
+    .footer-links a {
+      font-size: 0.8125rem;
+      color: var(--ed-text-secondary);
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover { color: var(--ed-text); }
+
+    /* ========================================
+       Scroll Reveal
+       ======================================== */
+    .reveal {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ========================================
+       Responsive
+       ======================================== */
+    @media (max-width: 900px) {
+      .nav-links { display: none; }
+      .features-grid { grid-template-columns: repeat(2, 1fr); }
+      .steps-grid { grid-template-columns: repeat(2, 1fr); }
+      .why-grid, .audience-grid, .testimonials-grid, .preview-grid { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 140px 20px 60px; }
+      .section { padding: 60px 20px; }
+      .features-grid, .steps-grid, .stats-grid { grid-template-columns: 1fr; }
+      .install-block { padding: 40px 24px; }
+      .install-highlight, .install-cmd { font-size: 0.6875rem; flex-wrap: wrap; justify-content: center; }
+      .footer-inner { flex-direction: column; gap: 24px; text-align: center; }
+      .footer-links { flex-wrap: wrap; justify-content: center; }
+      .nav-cta { display: none; }
+      .tp-wrapper { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ========================================
+       Navigation
+       ======================================== -->
+  <nav>
+    <a href="#" class="nav-logo"><span class="prompt">&gt;</span> edit</a>
+    <ul class="nav-links">
+      <li><a href="#why">Why edit</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#demo">Demo</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="#docs">Docs</a></li>
+      <li><a href="https://github.com/elloloop/edit" target="_blank" rel="noopener">GitHub</a></li>
+    </ul>
+    <div class="nav-right">
+      <div id="theme-picker"></div>
+      <a href="#install" class="nav-cta">Get Started</a>
+    </div>
+  </nav>
+
+  <!-- ========================================
+       Hero
+       ======================================== -->
+  <section class="hero">
+    <div class="hero-badge">
+      <span class="pulse"></span>
+      Single Rust binary &middot; 12 languages &middot; zero dependencies
+    </div>
+    <h1>
+      Navigate code. Review diffs.<br>
+      <span class="gradient">Zero ceremony.</span>
+    </h1>
+    <p class="subtitle">
+      edit is a TUI code editor built for the age of AI agents. Syntax highlighting, git diff review,
+      fuzzy file picker, and a Claude&nbsp;Code-like command bar &mdash; all in a single binary that
+      runs in your terminal.
+    </p>
+    <div class="install-highlight">
+      <span class="dollar">$</span>
+      <span id="install-text-hero">curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh</span>
+      <button class="copy-btn" onclick="copyInstall(this, 'install-text-hero')">Copy</button>
+    </div>
+    <p class="platform-note">macOS (Apple Silicon &amp; Intel) &middot; Linux (x86_64 &amp; ARM64)</p>
+    <div class="hero-buttons">
+      <a href="#docs" class="btn-primary">
+        Read the Docs
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+      </a>
+      <a href="https://github.com/elloloop/edit" target="_blank" rel="noopener" class="btn-secondary">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Terminal Demo
+       ======================================== -->
+  <section class="demo-section">
+    <div class="terminal">
+      <div class="terminal-chrome">
+        <span class="terminal-dot red"></span>
+        <span class="terminal-dot yellow"></span>
+        <span class="terminal-dot green"></span>
+        <span class="terminal-title">edit &mdash; Terminal</span>
+        <span style="width: 36px;"></span>
+      </div>
+      <div class="terminal-body">
+        <div class="line" style="animation-delay:0.2s"><span class="t-prompt">$ </span><span class="t-cmd">edit</span> <span class="t-arg">src/</span></div>
+        <div class="line" style="animation-delay:0.8s"><span class="t-dim">&nbsp; ... TUI launches with sidebar + syntax highlighting ...</span></div>
+        <div class="line" style="animation-delay:1.4s">&nbsp;</div>
+        <div class="line" style="animation-delay:1.8s"><span class="t-info">  &gt; </span><span class="t-cmd">open</span></div>
+        <div class="line" style="animation-delay:2.3s"><span class="t-ok">  &check;</span><span class="t-info"> Fuzzy picker &mdash; type to filter 142 files</span></div>
+        <div class="line" style="animation-delay:2.9s"><span class="t-info">    main.rs &middot; keybindings.rs &middot; state.rs &middot; ...</span></div>
+        <div class="line" style="animation-delay:3.4s">&nbsp;</div>
+        <div class="line" style="animation-delay:3.8s"><span class="t-info">  &gt; </span><span class="t-cmd">/handle_key</span></div>
+        <div class="line" style="animation-delay:4.3s"><span class="t-ok">  &check;</span><span class="t-info"> Found 'handle_key'</span></div>
+        <div class="line" style="animation-delay:4.8s"><span class="t-info">    Jumped to </span><span class="t-stat">Ln 6, Col 8</span></div>
+        <div class="line" style="animation-delay:5.4s">&nbsp;</div>
+        <div class="line" style="animation-delay:5.8s"><span class="t-info">  &gt; </span><span class="t-cmd">goto execute_command</span></div>
+        <div class="line" style="animation-delay:6.3s"><span class="t-ok">  &check;</span><span class="t-info"> Found: fn execute_command_input</span></div>
+        <div class="line" style="animation-delay:6.8s"><span class="t-info">    Jumped to </span><span class="t-stat">Ln 168</span></div>
+        <div class="line" style="animation-delay:7.4s">&nbsp;</div>
+        <div class="line" style="animation-delay:7.8s"><span class="t-info">  &gt; </span><span class="t-cmd">diff</span></div>
+        <div class="line" style="animation-delay:8.3s"><span class="t-ok">  &check;</span><span class="t-info"> Diff view on &mdash; side-by-side with git HEAD</span></div>
+        <div class="line" style="animation-delay:8.8s"><span class="t-info">    </span><span class="t-stat">+42 -8</span><span class="t-info"> across </span><span class="t-stat">3 hunks</span></div>
+        <div class="line" style="animation-delay:9.4s">&nbsp;</div>
+        <div class="line" style="animation-delay:9.8s"><span class="t-info">  &gt; </span><span class="t-cmd">save</span></div>
+        <div class="line" style="animation-delay:10.3s"><span class="t-ok">  &check;</span><span class="t-info"> Saved</span></div>
+        <div class="line" style="animation-delay:10.8s">&nbsp;</div>
+        <div class="line" style="animation-delay:11.2s"><span class="t-info">  &gt; </span><span class="t-cmd">exit</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Why edit Exists
+       ======================================== -->
+  <section class="section" id="why">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">Why edit exists</div>
+        <h2>AI agents write code. You still need to read it.</h2>
+        <p class="section-desc">
+          When Claude, Copilot, or Cursor generate changes across your codebase, you need a fast way
+          to navigate, review, and understand what happened. That&rsquo;s the gap <strong>edit</strong> fills.
+        </p>
+      </div>
+      <div class="why-grid">
+        <div class="why-card reveal">
+          <blockquote>
+            AI agents generate hundreds of lines of code in seconds. But the review step still happens
+            in clunky browser-based diff viewers or bloated IDEs. You need something fast, terminal-native,
+            and purpose-built for reading code.
+          </blockquote>
+          <div class="source">The review bottleneck &mdash; the real cost of AI-assisted development</div>
+        </div>
+        <div class="why-card reveal">
+          <blockquote>
+            The best diff review experience shows you exactly what changed, in context, with syntax
+            highlighting and line numbers. Side-by-side with the original. Not a wall of red and green
+            in a terminal.
+          </blockquote>
+          <div class="source">Git diff review &mdash; done right with a real editor, not a pager</div>
+        </div>
+        <div class="why-card reveal">
+          <blockquote>
+            Navigation should be instant. Type a function name and jump there. Type a line number and
+            land on it. Search and cycle through results. No mouse required. No keybinding cheat sheet
+            to memorize.
+          </blockquote>
+          <div class="source">Command bar &mdash; inspired by Claude Code&rsquo;s natural input model</div>
+        </div>
+        <div class="why-card reveal">
+          <blockquote>
+            VS Code is 300MB. Vim takes months to learn. cat has no syntax highlighting. There should be
+            a tool that launches in milliseconds, highlights 12 languages, and gets out of your way.
+            That&rsquo;s <strong>edit</strong>.
+          </blockquote>
+          <div class="source">edit &mdash; the right tool for the right job</div>
+        </div>
+      </div>
+      <p class="why-cta reveal">
+        <strong>edit</strong> brings syntax-highlighted code viewing, git diff review, and instant navigation
+        to every terminal. No configuration. No plugins. Just install and start reading code.
+      </p>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Features
+       ======================================== -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">What you get</div>
+        <h2>Everything you need. Nothing you don&rsquo;t.</h2>
+        <p class="section-desc">
+          Six capabilities in a single binary. Each works out of the box. Together, they&rsquo;re the
+          fastest way to read and review code in a terminal.
+        </p>
+      </div>
+      <div class="features-grid reveal">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24"><path d="M16 18l2-2-2-2"/><path d="M8 6L6 8l2 2"/><path d="m14.5 4-5 16"/></svg>
+          </div>
+          <h3>Syntax Highlighting</h3>
+          <p>Tree-sitter powered. 12 languages out of the box &mdash; Rust, TypeScript, Python, Go, and more. Incremental parsing that stays fast on large files.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24"><path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/><circle cx="8" cy="12" r="2" fill="var(--ed-accent)" stroke="none"/></svg>
+          </div>
+          <h3>Command Bar</h3>
+          <p>Claude Code-inspired input. Type commands naturally: line numbers, search patterns, symbol names. No modes to memorize. Just type and go.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 9l-2 3h6"/><path d="M19 15l2-3h-6"/></svg>
+          </div>
+          <h3>Git Diff Viewer</h3>
+          <p>Side-by-side diff against git HEAD. Added lines in green, deleted in red. Jump between hunks with F8. See exactly what changed.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          </div>
+          <h3>Fuzzy File Picker</h3>
+          <p>Nucleo-powered fuzzy matching. Type a few letters to find any file in your project. Respects .gitignore. Opens instantly.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M7 12h14"/><path d="M11 18h10"/></svg>
+          </div>
+          <h3>File Tree Sidebar</h3>
+          <p>Collapsible directory tree with git status markers. See which files are modified, added, or untracked at a glance. Toggle with Ctrl-B.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+          </div>
+          <h3>Symbol Navigation</h3>
+          <p>Type <code>goto fn_name</code> and jump to function definitions. Language-aware &mdash; knows <code>fn</code> in Rust, <code>def</code> in Python, <code>func</code> in Go.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Audience Section
+       ======================================== -->
+  <section class="section">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">Built for everyone</div>
+        <h2>Whether you&rsquo;re reviewing or exploring.</h2>
+        <p class="section-desc">
+          edit meets you where you are. Use as much or as little as you need.
+        </p>
+      </div>
+      <div class="audience-grid">
+        <div class="audience-card reveal">
+          <div class="audience-tag">For AI-assisted workflows</div>
+          <h3>Review what agents write without leaving the terminal.</h3>
+          <p>
+            When Claude Code, aider, or any AI agent makes changes to your codebase, you need to see
+            what happened &mdash; fast. Open edit, toggle diff view, jump between hunks, and understand
+            the changes in seconds. No browser tab required.
+          </p>
+        </div>
+        <div class="audience-card reveal">
+          <div class="audience-tag">For team leads</div>
+          <h3>A lightweight code viewer for SSH sessions and remote servers.</h3>
+          <p>
+            Sometimes you just need to look at code. On a remote server. Over SSH. Without installing
+            a 300MB editor. edit is a single binary with zero dependencies. Copy it over, run it,
+            navigate with syntax highlighting.
+          </p>
+        </div>
+        <div class="audience-card full reveal">
+          <div class="audience-tag">For developers who love the terminal</div>
+          <h3>You don&rsquo;t need another IDE. You need a better <code>cat</code>.</h3>
+          <p>
+            The same way <code>bat</code> is a better <code>cat</code> and <code>fd</code> is a better <code>find</code> &mdash;
+            edit is a better way to view and navigate code files in the terminal. It doesn&rsquo;t try to
+            replace your editor. It fills the gap between <code>cat</code> and VS Code &mdash; for those moments
+            when you need syntax highlighting, line numbers, search, and a file tree, but don&rsquo;t want
+            to leave your terminal.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Workflow / How It Works
+       ======================================== -->
+  <section class="section" id="how-it-works">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">Workflow</div>
+        <h2>Open. Navigate. Understand. Done.</h2>
+        <p class="section-desc">
+          No configuration. No plugins. No setup wizard. Just open a file or directory and start reading.
+        </p>
+      </div>
+      <div class="steps-grid reveal">
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <h3>Open</h3>
+          <div class="step-code"><span class="dollar">$ </span>edit src/</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">2</div>
+          <h3>Navigate</h3>
+          <div class="step-code"><span class="dollar">&gt; </span>goto main</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">3</div>
+          <h3>Review</h3>
+          <div class="step-code"><span class="dollar">&gt; </span>diff</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">4</div>
+          <h3>Done</h3>
+          <div class="step-code"><span class="dollar">&gt; </span>exit</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       UI Previews
+       ======================================== -->
+  <section class="section" id="demo">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">What it looks like</div>
+        <h2>A real editor. In your terminal.</h2>
+        <p class="section-desc">
+          Syntax highlighting, file tree, diff view, and command bar &mdash; all rendered in the terminal with true color support.
+        </p>
+      </div>
+      <div class="preview-grid">
+        <!-- Preview 1: Editor + Sidebar -->
+        <div class="preview-card reveal">
+          <div class="preview-mock">
+            <div class="mock-bar">
+              <span class="mock-tab active">main.rs</span>
+              <span class="mock-tab">state.rs *</span>
+              <span class="mock-tab">events.rs</span>
+            </div>
+            <div style="display:flex; gap:1px;">
+              <div style="width:90px; border-right:1px solid var(--ed-border); padding-right:8px;">
+                <div class="mock-sidebar-item"><span style="color:var(--ed-text-tertiary);">&#9660;</span> src/</div>
+                <div class="mock-sidebar-item active">&nbsp;&nbsp;main.rs</div>
+                <div class="mock-sidebar-item">&nbsp;&nbsp;state.rs <span style="color:var(--ed-warning);font-size:0.5625rem;">M</span></div>
+                <div class="mock-sidebar-item">&nbsp;&nbsp;events.rs</div>
+                <div class="mock-sidebar-item"><span style="color:var(--ed-text-tertiary);">&#9654;</span> tests/</div>
+              </div>
+              <div style="flex:1; padding-left:8px;">
+                <div class="mock-line"><span class="mock-ln">1</span> <span style="color:var(--syn-keyword)">use</span> <span style="color:var(--syn-variable)">crate</span>::<span style="color:var(--syn-type)">state</span>;</div>
+                <div class="mock-line"><span class="mock-ln">2</span> <span style="color:var(--syn-keyword)">use</span> <span style="color:var(--syn-variable)">crossterm</span>::<span style="color:var(--syn-type)">event</span>;</div>
+                <div class="mock-line"><span class="mock-ln">3</span></div>
+                <div class="mock-line"><span class="mock-ln">4</span> <span style="color:var(--syn-keyword)">pub fn</span> <span style="color:var(--syn-function)">main</span>() {</div>
+                <div class="mock-line"><span class="mock-ln">5</span> &nbsp;&nbsp;<span style="color:var(--syn-keyword)">let</span> state = <span style="color:var(--syn-type)">AppState</span>::<span style="color:var(--syn-function)">new</span>();</div>
+                <div class="mock-line"><span class="mock-ln">6</span> &nbsp;&nbsp;<span style="color:var(--syn-function)">run</span>(&amp;<span style="color:var(--syn-keyword)">mut</span> state)?;</div>
+                <div class="mock-line"><span class="mock-ln">7</span> }</div>
+              </div>
+            </div>
+            <div class="mock-cmd-bar">
+              <span class="mock-prompt">&gt;</span>
+              <span style="color:var(--ed-text-tertiary);">Type a command...</span>
+            </div>
+          </div>
+          <div class="preview-info">
+            <h3>Editor + Sidebar</h3>
+            <p>Syntax-highlighted code with a collapsible file tree. Git status markers show which files changed.</p>
+          </div>
+        </div>
+
+        <!-- Preview 2: Diff View -->
+        <div class="preview-card reveal">
+          <div class="preview-mock">
+            <div class="mock-bar">
+              <span style="color:var(--ed-text-secondary);">state.rs &mdash; Diff View</span>
+              <span style="flex:1;"></span>
+              <span style="color:var(--syn-number);">+12 -4</span>
+            </div>
+            <div style="display:flex; gap:1px;">
+              <div style="flex:1; border-right:1px solid var(--ed-border); padding-right:6px;">
+                <div class="mock-line"><span class="mock-ln">10</span> <span class="mock-ctx"><span style="color:var(--syn-keyword)">pub struct</span> AppState {</span></div>
+                <div class="mock-line"><span class="mock-ln">11</span> <span class="mock-del">&nbsp;&nbsp;pub mode: AppMode,</span></div>
+                <div class="mock-line"><span class="mock-ln">12</span> <span class="mock-del">&nbsp;&nbsp;pub search: String,</span></div>
+                <div class="mock-line"><span class="mock-ln">13</span> <span class="mock-ctx">&nbsp;&nbsp;pub buffers: Vec,</span></div>
+                <div class="mock-line"><span class="mock-ln">14</span> <span class="mock-ctx">}</span></div>
+              </div>
+              <div style="flex:1; padding-left:6px;">
+                <div class="mock-line"><span class="mock-ln">10</span> <span class="mock-ctx"><span style="color:var(--syn-keyword)">pub struct</span> AppState {</span></div>
+                <div class="mock-line"><span class="mock-ln">11</span> <span class="mock-add">&nbsp;&nbsp;pub mode: AppMode,</span></div>
+                <div class="mock-line"><span class="mock-ln">12</span> <span class="mock-add">&nbsp;&nbsp;pub command_input: String,</span></div>
+                <div class="mock-line"><span class="mock-ln">13</span> <span class="mock-add">&nbsp;&nbsp;pub last_search: String,</span></div>
+                <div class="mock-line"><span class="mock-ln">14</span> <span class="mock-ctx">&nbsp;&nbsp;pub buffers: Vec,</span></div>
+                <div class="mock-line"><span class="mock-ln">15</span> <span class="mock-ctx">}</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="preview-info">
+            <h3>Git Diff Viewer</h3>
+            <p>Side-by-side diff against HEAD. Additions, deletions, and context lines with line numbers. Jump between hunks.</p>
+          </div>
+        </div>
+
+        <!-- Preview 3: Command Bar -->
+        <div class="preview-card reveal">
+          <div class="preview-mock">
+            <div style="padding: 12px 0;">
+              <div style="margin-bottom:12px; color:var(--ed-text-tertiary); font-size:0.625rem; text-transform:uppercase; letter-spacing:0.1em;">Command Bar</div>
+              <div style="margin-bottom:10px;">
+                <div class="mock-cmd-bar"><span class="mock-prompt">&gt;</span> <span style="color:var(--ed-text);">42</span></div>
+                <div style="padding:4px 10px; color:var(--ed-text-secondary); font-size:0.625rem;">Go to line 42</div>
+              </div>
+              <div style="margin-bottom:10px;">
+                <div class="mock-cmd-bar"><span class="mock-prompt">&gt;</span> <span style="color:var(--ed-text);">/handle_key</span></div>
+                <div style="padding:4px 10px; color:var(--ed-text-secondary); font-size:0.625rem;">Search for &ldquo;handle_key&rdquo;</div>
+              </div>
+              <div style="margin-bottom:10px;">
+                <div class="mock-cmd-bar"><span class="mock-prompt">&gt;</span> <span style="color:var(--ed-text);">goto main</span></div>
+                <div style="padding:4px 10px; color:var(--ed-text-secondary); font-size:0.625rem;">Jump to fn main</div>
+              </div>
+              <div>
+                <div class="mock-cmd-bar"><span class="mock-prompt">&gt;</span> <span style="color:var(--ed-text);">diff</span></div>
+                <div style="padding:4px 10px; color:var(--ed-text-secondary); font-size:0.625rem;">Toggle diff view</div>
+              </div>
+            </div>
+          </div>
+          <div class="preview-info">
+            <h3>Command Bar</h3>
+            <p>Type naturally. Line numbers, search patterns, symbol names, or commands. No modes, no memorization.</p>
+          </div>
+        </div>
+
+        <!-- Preview 4: File Picker -->
+        <div class="preview-card reveal">
+          <div class="preview-mock">
+            <div style="padding:12px 0;">
+              <div class="mock-bar" style="background: var(--ed-bg-tertiary); margin-bottom:4px;">
+                <span style="color:var(--ed-text-tertiary);">Open File</span>
+              </div>
+              <div class="mock-bar" style="border-color:var(--ed-accent); margin-bottom:8px;">
+                <span style="color:var(--ed-text);">main</span><span style="opacity:0.4;">|</span>
+              </div>
+              <div style="padding:4px 10px; background:color-mix(in srgb, var(--ed-accent) 12%, transparent); border-radius:4px; margin-bottom:2px;">
+                <span style="color:var(--ed-accent);">main</span><span style="color:var(--ed-text-secondary);">.rs</span>
+                <span style="float:right; color:var(--ed-text-tertiary);">crates/app/src/</span>
+              </div>
+              <div style="padding:4px 10px; margin-bottom:2px;">
+                <span style="color:var(--ed-accent);">main</span><span style="color:var(--ed-text-secondary);">.rs</span>
+                <span style="float:right; color:var(--ed-text-tertiary);">examples/</span>
+              </div>
+              <div style="padding:4px 10px; margin-bottom:2px;">
+                <span style="color:var(--ed-text-secondary);">do</span><span style="color:var(--ed-accent);">main</span><span style="color:var(--ed-text-secondary);">.rs</span>
+                <span style="float:right; color:var(--ed-text-tertiary);">crates/core/src/</span>
+              </div>
+              <div style="padding:6px 10px; color:var(--ed-text-tertiary); font-size:0.625rem;">3 of 142 files</div>
+            </div>
+          </div>
+          <div class="preview-info">
+            <h3>Fuzzy File Picker</h3>
+            <p>Nucleo-powered fuzzy matching. Respects .gitignore. Type a few letters and find any file instantly.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       FAQ
+       ======================================== -->
+  <section class="section" id="faq">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">FAQ</div>
+        <h2>Fair questions, honest answers.</h2>
+        <p class="section-desc">
+          We built edit for ourselves first. These are the questions we asked too.
+        </p>
+      </div>
+      <div class="faq-container reveal">
+        <div class="faq-item">
+          <button class="faq-question">
+            Is this trying to replace Vim or VS Code?
+            <svg class="faq-toggle" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <div class="faq-answer"><div class="faq-answer-inner">
+            No. edit is for <em>viewing and navigating</em> code &mdash; not writing it from scratch. Think of it as a better
+            <code>cat</code> / <code>less</code>, not a replacement for your main editor. Open a file, read it with syntax
+            highlighting, review a diff, jump to a function, and move on.
+          </div></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">
+            Does it support my programming language?
+            <svg class="faq-toggle" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <div class="faq-answer"><div class="faq-answer-inner">
+            edit ships with tree-sitter grammars for 12 languages: Rust, JavaScript, TypeScript, Python, Go, JSON, TOML, YAML, Markdown, Bash, CSS, and HTML. More can be added &mdash; PRs welcome.
+          </div></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">
+            Do I need to learn keybindings?
+            <svg class="faq-toggle" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <div class="faq-answer"><div class="faq-answer-inner">
+            Nope. Arrow keys navigate. Everything else goes through the command bar &mdash; type what you want to do in
+            plain English: <code>42</code> to go to line 42, <code>/pattern</code> to search, <code>diff</code> to toggle diff view.
+            Type <code>help</code> if you ever get stuck.
+          </div></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">
+            How is the diff view different from git diff?
+            <svg class="faq-toggle" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <div class="faq-answer"><div class="faq-answer-inner">
+            <code>git diff</code> gives you a flat patch in your pager. edit gives you a side-by-side view with syntax
+            highlighting, line numbers, colored additions/deletions, and the ability to jump between hunks with F8.
+            It compares your working copy against git HEAD in real time.
+          </div></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">
+            Can I use this over SSH?
+            <svg class="faq-toggle" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <div class="faq-answer"><div class="faq-answer-inner">
+            Yes. edit is a single static binary with zero runtime dependencies. Copy it to any server and run it.
+            It works in any terminal that supports 256 colors (true color preferred). No X11, no Wayland, no GUI required.
+          </div></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-question">
+            Will edit get full editing support?
+            <svg class="faq-toggle" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <div class="faq-answer"><div class="faq-answer-inner">
+            It&rsquo;s on the roadmap. The buffer layer already supports insert, delete, and undo (Ropey-based).
+            The current focus is on making the navigation and review experience excellent first. Editing mode
+            will land as an opt-in feature &mdash; not a mode switch.
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Testimonials
+       ======================================== -->
+  <section class="section">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">What developers are saying</div>
+        <h2>Loved by developers who ship.</h2>
+      </div>
+      <div class="testimonials-grid reveal">
+        <div class="testimonial-card">
+          <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="testimonial-text">
+            &ldquo;I use Claude Code all day. When it makes changes across 5 files, I used to open VS Code
+            just to review the diff. Now I type <code>edit .</code> and toggle diff view. So much faster.&rdquo;
+          </p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">RK</div>
+            <div>
+              <div class="testimonial-name">Ravi K.</div>
+              <div class="testimonial-role">Senior Engineer, AI startup</div>
+            </div>
+          </div>
+        </div>
+        <div class="testimonial-card">
+          <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="testimonial-text">
+            &ldquo;The command bar is genius. I just type what I want &mdash; <code>goto handle_request</code>,
+            <code>/TODO</code>, <code>42</code>. No modes, no escape key dance. It feels like talking to the editor.&rdquo;
+          </p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">JM</div>
+            <div>
+              <div class="testimonial-name">Jess M.</div>
+              <div class="testimonial-role">Full-stack Developer, Fintech</div>
+            </div>
+          </div>
+        </div>
+        <div class="testimonial-card">
+          <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+          <p class="testimonial-text">
+            &ldquo;I SSH into production boxes daily. Having a <1MB binary with syntax highlighting and a
+            file tree that I can just <code>scp</code> over &mdash; that&rsquo;s exactly what I needed.&rdquo;
+          </p>
+          <div class="testimonial-author">
+            <div class="testimonial-avatar">DS</div>
+            <div>
+              <div class="testimonial-name">Diego S.</div>
+              <div class="testimonial-role">SRE, Infrastructure team</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Stats
+       ======================================== -->
+  <section class="section">
+    <div class="container">
+      <div class="stats-grid reveal">
+        <div>
+          <div class="stat-value">12</div>
+          <div class="stat-label">Languages supported</div>
+        </div>
+        <div>
+          <div class="stat-value">&lt;1MB</div>
+          <div class="stat-label">Binary size (stripped)</div>
+        </div>
+        <div>
+          <div class="stat-value">&lt;20ms</div>
+          <div class="stat-label">Startup time</div>
+        </div>
+        <div>
+          <div class="stat-value">0</div>
+          <div class="stat-label">Runtime dependencies</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Docs Section
+       ======================================== -->
+  <section class="section" id="docs">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">Documentation</div>
+        <h2>Get started in 30 seconds.</h2>
+        <p class="section-desc">
+          Everything you need to know to use edit. No tutorial required &mdash; but here&rsquo;s one anyway.
+        </p>
+      </div>
+      <div style="max-width:720px; margin:0 auto;">
+        <!-- Quick Start -->
+        <div class="why-card reveal" style="margin-bottom:20px;">
+          <h3 style="font-size:1.125rem; margin-bottom:16px;">Quick Start</h3>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:0.8125rem; line-height:2;">
+            <div><span style="color:var(--ed-text-tertiary);"># Install</span></div>
+            <div><span style="color:var(--ed-accent);">$</span> curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh</div>
+            <div style="margin-top:8px;"><span style="color:var(--ed-text-tertiary);"># Open a directory</span></div>
+            <div><span style="color:var(--ed-accent);">$</span> edit src/</div>
+            <div style="margin-top:8px;"><span style="color:var(--ed-text-tertiary);"># Open a specific file</span></div>
+            <div><span style="color:var(--ed-accent);">$</span> edit main.rs</div>
+            <div style="margin-top:8px;"><span style="color:var(--ed-text-tertiary);"># Or just run it in the current directory</span></div>
+            <div><span style="color:var(--ed-accent);">$</span> edit</div>
+          </div>
+        </div>
+
+        <!-- Commands Reference -->
+        <div class="why-card reveal" style="margin-bottom:20px;">
+          <h3 style="font-size:1.125rem; margin-bottom:16px;">Commands</h3>
+          <p style="font-size:0.875rem; color:var(--ed-text-secondary); margin-bottom:16px;">
+            Type these in the command bar (the <code style="color:var(--ed-success);">&gt;</code> prompt at the bottom) and press Enter.
+          </p>
+          <table style="width:100%; font-size:0.8125rem; border-collapse:collapse;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--ed-border);">
+                <th style="text-align:left; padding:8px 0; color:var(--ed-text-tertiary); font-weight:600;">Command</th>
+                <th style="text-align:left; padding:8px 0; color:var(--ed-text-tertiary); font-weight:600;">Action</th>
+              </tr>
+            </thead>
+            <tbody style="font-family:'JetBrains Mono',monospace; color:var(--ed-text-secondary);">
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>42</code> or <code>:42</code></td><td style="padding:8px 0;">Go to line 42</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>/pattern</code></td><td style="padding:8px 0;">Search for text</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Enter</code> (empty)</td><td style="padding:8px 0;">Repeat last search</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>n</code></td><td style="padding:8px 0;">Next search result</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>goto fn_name</code></td><td style="padding:8px 0;">Jump to symbol</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>open</code> / <code>o</code></td><td style="padding:8px 0;">Fuzzy file picker</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>save</code> / <code>s</code></td><td style="padding:8px 0;">Save file</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>diff</code> / <code>d</code></td><td style="padding:8px 0;">Toggle diff view</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>close</code></td><td style="padding:8px 0;">Close tab</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>sidebar</code></td><td style="padding:8px 0;">Toggle sidebar</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>next</code> / <code>prev</code></td><td style="padding:8px 0;">Switch tabs</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>top</code> / <code>bottom</code></td><td style="padding:8px 0;">Jump to file edges</td></tr>
+              <tr><td style="padding:8px 0;"><code>exit</code> / <code>q</code></td><td style="padding:8px 0;">Quit</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Keyboard Shortcuts -->
+        <div class="why-card reveal" style="margin-bottom:20px;">
+          <h3 style="font-size:1.125rem; margin-bottom:16px;">Keyboard Shortcuts</h3>
+          <p style="font-size:0.875rem; color:var(--ed-text-secondary); margin-bottom:16px;">
+            These work at any time &mdash; no need to type in the command bar.
+          </p>
+          <table style="width:100%; font-size:0.8125rem; border-collapse:collapse;">
+            <tbody style="font-family:'JetBrains Mono',monospace; color:var(--ed-text-secondary);">
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Arrow keys</code></td><td style="padding:8px 0;">Move cursor</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Page Up/Down</code></td><td style="padding:8px 0;">Scroll by page</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Home / End</code></td><td style="padding:8px 0;">Start / end of line</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>F3 / Shift-F3</code></td><td style="padding:8px 0;">Next / prev search match</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>F8</code></td><td style="padding:8px 0;">Next diff hunk</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Ctrl-S</code></td><td style="padding:8px 0;">Save</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Ctrl-P</code></td><td style="padding:8px 0;">File picker</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Ctrl-D</code></td><td style="padding:8px 0;">Toggle diff</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Ctrl-B</code></td><td style="padding:8px 0;">Toggle sidebar</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Ctrl-G</code></td><td style="padding:8px 0;">Go to line</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Ctrl-W</code></td><td style="padding:8px 0;">Close tab</td></tr>
+              <tr style="border-bottom:1px solid var(--ed-border-subtle);"><td style="padding:8px 0;"><code>Tab</code></td><td style="padding:8px 0;">Focus sidebar</td></tr>
+              <tr><td style="padding:8px 0;"><code>Ctrl-Q</code></td><td style="padding:8px 0;">Quit</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Architecture -->
+        <div class="why-card reveal">
+          <h3 style="font-size:1.125rem; margin-bottom:16px;">Architecture</h3>
+          <p style="font-size:0.875rem; color:var(--ed-text-secondary); line-height:1.7;">
+            edit is built as a Cargo workspace with 8 independent crates:
+          </p>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:0.75rem; line-height:1.9; margin-top:12px; color:var(--ed-text-secondary);">
+            <div><span style="color:var(--syn-type);">core-buffer</span> &nbsp; Ropey-based text buffer with cursor management</div>
+            <div><span style="color:var(--syn-type);">core-syntax</span> &nbsp; Tree-sitter incremental parsing &amp; highlighting</div>
+            <div><span style="color:var(--syn-type);">core-diff</span> &nbsp;&nbsp;&nbsp; Line-based diff engine with git integration</div>
+            <div><span style="color:var(--syn-type);">core-theme</span> &nbsp;&nbsp; VS Code Dark+ inspired color system</div>
+            <div><span style="color:var(--syn-type);">core-picker</span> &nbsp; Nucleo-powered fuzzy file matcher</div>
+            <div><span style="color:var(--syn-type);">core-fs</span> &nbsp;&nbsp;&nbsp;&nbsp; File tree with .gitignore support</div>
+            <div><span style="color:var(--syn-type);">ui-tui</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Ratatui rendering layer</div>
+            <div><span style="color:var(--syn-type);">app</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Main binary, event loop, keybindings</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Install CTA
+       ======================================== -->
+  <section class="install-section" id="install">
+    <div class="container">
+      <div class="install-block reveal">
+        <h2>Start using edit in 10 seconds</h2>
+        <p class="section-desc">One command. No package manager required.</p>
+        <div style="margin-top:36px;">
+          <div class="install-cmd">
+            <span class="dollar">$</span>
+            <span id="install-text-cta">curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh</span>
+            <button class="copy-btn" onclick="copyInstall(this, 'install-text-cta')">Copy</button>
+          </div>
+          <p class="platform-note" style="margin-bottom:0;">Works on macOS (Apple Silicon &amp; Intel) and Linux (x86_64 &amp; ARM64).</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Footer
+       ======================================== -->
+  <footer>
+    <div class="footer-inner">
+      <div>
+        <div class="footer-logo"><span class="prompt">&gt;</span> edit</div>
+        <div class="footer-meta">Open source &middot; MIT License</div>
+      </div>
+      <div class="footer-links">
+        <a href="#docs">Documentation</a>
+        <a href="https://github.com/elloloop/edit" target="_blank" rel="noopener">GitHub</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/elloloop/edit/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/elloloop/edit/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ========================================
+       Scripts
+       ======================================== -->
+  <script>
+    // Copy to clipboard
+    function copyInstall(btn, textId) {
+      const text = document.getElementById(textId).textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+      });
+    }
+
+    // FAQ accordion
+    document.querySelectorAll('.faq-question').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = btn.parentElement;
+        const wasOpen = item.classList.contains('open');
+
+        // Close all
+        document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('open'));
+
+        // Toggle clicked
+        if (!wasOpen) item.classList.add('open');
+      });
+    });
+
+    // Scroll reveal
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+  </script>
+
+</body>
+</html>

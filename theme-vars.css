@@ -1,0 +1,130 @@
+/* ========================================
+   edit — Design Token System
+   ======================================== */
+
+:root {
+  /* Default: Midnight theme */
+  --ed-bg: #0a0a0a;
+  --ed-bg-secondary: #111111;
+  --ed-bg-tertiary: #171717;
+  --ed-bg-hover: #1c1c1c;
+  --ed-bg-active: #222222;
+
+  --ed-border: #262626;
+  --ed-border-subtle: #1a1a1a;
+
+  --ed-text: #e5e5e5;
+  --ed-text-secondary: #a3a3a3;
+  --ed-text-tertiary: #525252;
+
+  --ed-accent: #ffffff;
+  --ed-accent-hover: #e5e5e5;
+  --ed-accent-contrast: #0a0a0a;
+
+  --ed-success: #22c55e;
+  --ed-error: #ef4444;
+  --ed-warning: #f59e0b;
+  --ed-info: #a3a3a3;
+
+  --accent-subtle: color-mix(in srgb, var(--ed-accent) 8%, transparent);
+  --accent-border: color-mix(in srgb, var(--ed-accent) 20%, transparent);
+
+  --max-w: 1400px;
+
+  /* Syntax colors (for code examples) */
+  --syn-keyword: #569cd6;
+  --syn-string: #ce9178;
+  --syn-comment: #6a9955;
+  --syn-function: #dcdcaa;
+  --syn-type: #4ec9b0;
+  --syn-number: #b5cea8;
+  --syn-variable: #9cdcfe;
+}
+
+/* ========================================
+   Theme: Ocean
+   ======================================== */
+[data-theme="ocean"] {
+  --ed-bg: #0b1120;
+  --ed-bg-secondary: #0f172a;
+  --ed-bg-tertiary: #131c30;
+  --ed-bg-hover: #172038;
+  --ed-bg-active: #1e293b;
+
+  --ed-border: #1e3a5f;
+  --ed-border-subtle: #162d4d;
+
+  --ed-accent: #38bdf8;
+  --ed-accent-hover: #7dd3fc;
+  --ed-accent-contrast: #0b1120;
+
+  --ed-success: #34d399;
+  --ed-error: #f87171;
+  --ed-warning: #fbbf24;
+}
+
+/* ========================================
+   Theme: Forest
+   ======================================== */
+[data-theme="forest"] {
+  --ed-bg: #0a100e;
+  --ed-bg-secondary: #0f1a14;
+  --ed-bg-tertiary: #132119;
+  --ed-bg-hover: #17281e;
+  --ed-bg-active: #1c3024;
+
+  --ed-border: #1e4d35;
+  --ed-border-subtle: #163d2a;
+
+  --ed-accent: #4ade80;
+  --ed-accent-hover: #86efac;
+  --ed-accent-contrast: #0a100e;
+
+  --ed-success: #4ade80;
+  --ed-error: #fb7185;
+  --ed-warning: #fbbf24;
+}
+
+/* ========================================
+   Theme: Ember
+   ======================================== */
+[data-theme="ember"] {
+  --ed-bg: #110a0a;
+  --ed-bg-secondary: #1a0f0f;
+  --ed-bg-tertiary: #211313;
+  --ed-bg-hover: #2a1818;
+  --ed-bg-active: #331c1c;
+
+  --ed-border: #4d1e1e;
+  --ed-border-subtle: #3d1616;
+
+  --ed-accent: #f97316;
+  --ed-accent-hover: #fb923c;
+  --ed-accent-contrast: #110a0a;
+
+  --ed-success: #4ade80;
+  --ed-error: #ef4444;
+  --ed-warning: #fbbf24;
+}
+
+/* ========================================
+   Theme: Violet
+   ======================================== */
+[data-theme="violet"] {
+  --ed-bg: #0d0a14;
+  --ed-bg-secondary: #130f1e;
+  --ed-bg-tertiary: #181327;
+  --ed-bg-hover: #1e182f;
+  --ed-bg-active: #251e38;
+
+  --ed-border: #3b2d5e;
+  --ed-border-subtle: #2d224a;
+
+  --ed-accent: #a78bfa;
+  --ed-accent-hover: #c4b5fd;
+  --ed-accent-contrast: #0d0a14;
+
+  --ed-success: #4ade80;
+  --ed-error: #f87171;
+  --ed-warning: #fbbf24;
+}
