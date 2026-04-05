@@ -24,7 +24,7 @@ pub fn run(
         }
 
         // Ensure cursor is visible in viewport
-        let height = terminal.size()?.height.saturating_sub(2) as usize; // tabs + statusbar
+        let height = terminal.size()?.height.saturating_sub(3) as usize; // tabs + command bar (2 lines)
         state.current_buffer_mut().ensure_cursor_visible(height);
 
         // Render
@@ -33,21 +33,10 @@ pub fn run(
                 Some(ActivePicker::File(p)) => Some(p),
                 _ => None,
             };
-            let command_picker = state.command_palette.as_ref();
             let status_msg = state
                 .status_message
                 .as_ref()
                 .map(|(msg, _)| msg.as_str());
-            let search_query = if state.mode == crate::state::AppMode::Search {
-                Some(state.search_query.as_str())
-            } else {
-                None
-            };
-            let goto_input = if state.mode == crate::state::AppMode::GoToLine {
-                Some(state.goto_input.as_str())
-            } else {
-                None
-            };
 
             layout::render_app(
                 f,
@@ -61,10 +50,8 @@ pub fn run(
                 &state.diffs,
                 state.help_visible,
                 file_picker,
-                command_picker,
+                &state.command_input,
                 status_msg,
-                search_query,
-                goto_input,
             );
         })?;
 

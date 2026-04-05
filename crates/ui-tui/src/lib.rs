@@ -1,3 +1,4 @@
+pub mod command_bar;
 pub mod diff_view;
 pub mod editor;
 pub mod help;

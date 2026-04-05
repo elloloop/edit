@@ -12,56 +12,53 @@ pub fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border))
         .style(Style::default().bg(theme.picker_bg).fg(theme.picker_fg))
-        .title(" Help — Keybindings ");
+        .title(" Help ");
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let sections: Vec<(&str, Vec<(&str, &str)>)> = vec![
         (
-            "Navigation",
+            "Commands (type in command bar, press Enter)",
+            vec![
+                ("42 or :42", "Go to line 42"),
+                ("/pattern", "Search for text"),
+                ("Enter (empty)", "Repeat last search"),
+                ("n", "Next search result"),
+                ("goto <name>", "Jump to function/symbol"),
+                ("open or o", "Open file picker"),
+                ("save or s", "Save current file"),
+                ("close", "Close current tab"),
+                ("diff or d", "Toggle diff view"),
+                ("sidebar", "Toggle sidebar"),
+                ("next / prev", "Switch tabs"),
+                ("top / bottom", "Jump to start/end"),
+                ("exit or q", "Quit"),
+                ("help", "Show this help"),
+            ],
+        ),
+        (
+            "Navigation (always active)",
             vec![
                 ("Arrow keys", "Move cursor"),
                 ("Home / End", "Start / end of line"),
                 ("Page Up / Down", "Scroll by page"),
-                ("Ctrl-G", "Go to line"),
-            ],
-        ),
-        (
-            "Editing",
-            vec![
-                ("Type", "Insert text"),
-                ("Backspace", "Delete character before cursor"),
-                ("Delete", "Delete character at cursor"),
-                ("Enter", "New line"),
-                ("Ctrl-S", "Save file"),
-            ],
-        ),
-        (
-            "Tabs & Files",
-            vec![
-                ("Ctrl-P", "Open file picker"),
-                ("Ctrl-W", "Close current tab"),
-                ("Ctrl-Tab", "Next tab"),
-                ("Ctrl-Shift-Tab", "Previous tab"),
-                ("Ctrl-B", "Toggle sidebar"),
-                ("Enter (sidebar)", "Open file / toggle folder"),
-            ],
-        ),
-        (
-            "Search & Diff",
-            vec![
-                ("/", "Search in file"),
-                ("Ctrl-D", "Toggle diff view"),
+                ("F3 / Shift-F3", "Next / prev search result"),
                 ("F8", "Next diff hunk"),
             ],
         ),
         (
-            "General",
+            "Shortcuts",
             vec![
-                (":", "Command palette"),
-                ("?", "Toggle this help"),
-                ("Escape", "Close overlay / cancel"),
+                ("Ctrl-S", "Save"),
+                ("Ctrl-P", "Open file picker"),
+                ("Ctrl-D", "Toggle diff view"),
+                ("Ctrl-G", "Go to line (prefills :)"),
+                ("Ctrl-B", "Toggle sidebar"),
+                ("Ctrl-W", "Close tab"),
+                ("Ctrl-Tab / F2", "Next tab"),
                 ("Ctrl-Q", "Quit"),
+                ("Tab", "Focus sidebar"),
+                ("Esc", "Clear command / close overlay"),
             ],
         ),
     ];

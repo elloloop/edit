@@ -9,12 +9,12 @@ use ratatui::Frame;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::command_bar::{self, CommandBarState};
 use crate::diff_view;
 use crate::editor;
 use crate::help;
 use crate::picker_ui;
 use crate::sidebar;
-use crate::statusbar::{self, StatusBarInfo};
 use crate::tabs::{self, TabInfo};
 
 #[allow(clippy::too_many_arguments)]
@@ -30,26 +30,24 @@ pub fn render_app(
     diffs: &HashMap<PathBuf, FileDiff>,
     help_visible: bool,
     file_picker: Option<&Picker<PickerPath>>,
-    command_picker: Option<&Picker<core_picker::Command>>,
+    command_input: &str,
     status_message: Option<&str>,
-    search_query: Option<&str>,
-    goto_input: Option<&str>,
 ) {
     let area = f.area();
 
-    // Main vertical layout: tabs | body | statusbar
+    // Main vertical layout: tabs | body | info line | command input
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // tab bar
             Constraint::Min(1),   // body
-            Constraint::Length(1), // status bar
+            Constraint::Length(2), // command bar (info + input)
         ])
         .split(area);
 
     let tab_area = main_layout[0];
     let body_area = main_layout[1];
-    let status_area = main_layout[2];
+    let command_area = main_layout[2];
 
     // Render tabs
     let tab_infos: Vec<TabInfo> = buffers
@@ -95,20 +93,20 @@ pub fn render_app(
         );
     }
 
-    // Status bar
+    // Command bar (info line + input)
     let buf = &buffers[active_buffer];
-    let info = StatusBarInfo {
+    let cb_state = CommandBarState {
+        input: command_input.to_string(),
+        status_message: status_message.map(|s| s.to_string()),
         file_name: buf.file_name(),
         language: buf.language.clone(),
         cursor_line: buf.cursor_line + 1,
         cursor_col: buf.cursor_col + 1,
         total_lines: buf.line_count(),
         dirty: buf.dirty,
-        message: status_message.map(|s| s.to_string()),
-        search_query: search_query.map(|s| s.to_string()),
-        goto_input: goto_input.map(|s| s.to_string()),
+        diff_mode,
     };
-    statusbar::render_statusbar(f, status_area, &info, theme);
+    command_bar::render_command_bar(f, command_area, &cb_state, theme);
 
     // Overlays
     if help_visible {
@@ -119,11 +117,6 @@ pub fn render_app(
     if let Some(picker) = file_picker {
         let overlay = centered_rect(60, 50, area);
         picker_ui::render_picker(f, overlay, picker, "Open File", theme);
-    }
-
-    if let Some(picker) = command_picker {
-        let overlay = centered_rect(60, 50, area);
-        picker_ui::render_picker(f, overlay, picker, "Command Palette", theme);
     }
 }
 

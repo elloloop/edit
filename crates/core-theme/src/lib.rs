@@ -46,6 +46,14 @@ pub struct Theme {
     pub picker_fg: Color,
     pub picker_match: Color,
     pub picker_selected: Color,
+    // Command bar
+    pub command_bar_bg: Color,
+    pub command_bar_fg: Color,
+    pub command_bar_prompt: Color,
+    pub command_bar_placeholder: Color,
+    pub command_bar_info_bg: Color,
+    pub command_bar_info_fg: Color,
+    pub command_bar_info_accent: Color,
     // Borders
     pub border: Color,
 }
@@ -99,6 +107,14 @@ impl Theme {
             picker_fg: Color::Rgb(204, 204, 204),
             picker_match: Color::Rgb(18, 133, 201),
             picker_selected: Color::Rgb(4, 57, 94),
+            // Command bar
+            command_bar_bg: Color::Rgb(24, 24, 24),
+            command_bar_fg: Color::Rgb(204, 204, 204),
+            command_bar_prompt: Color::Rgb(13, 147, 115),
+            command_bar_placeholder: Color::Rgb(90, 90, 90),
+            command_bar_info_bg: Color::Rgb(37, 37, 38),
+            command_bar_info_fg: Color::Rgb(130, 130, 130),
+            command_bar_info_accent: Color::Rgb(75, 140, 200),
             // Borders
             border: Color::Rgb(60, 60, 60),
         }

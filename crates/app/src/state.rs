@@ -1,7 +1,7 @@
 use core_buffer::Buffer;
 use core_diff::{ChangedFile, FileDiff};
 use core_fs::FileTree;
-use core_picker::{Command, Picker, PickerPath};
+use core_picker::{Picker, PickerPath};
 use core_syntax::Highlighter;
 use core_theme::Theme;
 use std::collections::HashMap;
@@ -12,10 +12,7 @@ use std::time::Instant;
 pub enum AppMode {
     Normal,
     Picker,
-    Command,
     Help,
-    Search,
-    GoToLine,
 }
 
 #[allow(dead_code)]
@@ -39,10 +36,9 @@ pub struct AppState {
     #[allow(dead_code)]
     pub changed_files: Vec<ChangedFile>,
     pub help_visible: bool,
-    pub command_palette: Option<Picker<Command>>,
     pub status_message: Option<(String, Instant)>,
-    pub search_query: String,
-    pub goto_input: String,
+    pub command_input: String,
+    pub last_search: String,
     pub quit: bool,
     pub root_dir: PathBuf,
 }
@@ -110,10 +106,9 @@ impl AppState {
             diffs: HashMap::new(),
             changed_files,
             help_visible: false,
-            command_palette: None,
             status_message: None,
-            search_query: String::new(),
-            goto_input: String::new(),
+            command_input: String::new(),
+            last_search: String::new(),
             quit: false,
             root_dir,
         })
@@ -172,6 +167,7 @@ impl AppState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn reparse_current_buffer(&mut self) {
         let idx = self.active_buffer;
         let content = self.buffers[idx].content();
