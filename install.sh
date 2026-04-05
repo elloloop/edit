@@ -37,9 +37,12 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 case "$OS" in
-  Darwin) PLATFORM="apple-darwin" ;;
-  Linux)  PLATFORM="unknown-linux-gnu" ;;
-  *)      fail "Unsupported OS: $OS (only macOS and Linux are supported)" ;;
+  Darwin)  PLATFORM="apple-darwin" ;;
+  Linux)   PLATFORM="unknown-linux-gnu" ;;
+  MINGW*|MSYS*|CYGWIN*)
+    fail "On Windows, download the .exe directly from https://github.com/${REPO}/releases/latest"
+    ;;
+  *)       fail "Unsupported OS: $OS. Download binaries at https://github.com/${REPO}/releases/latest" ;;
 esac
 
 case "$ARCH" in

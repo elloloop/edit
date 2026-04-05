@@ -26,6 +26,9 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             gui: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            gui: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +52,8 @@ jobs:
             libxkbcommon-dev libssl-dev libgtk-3-dev libglib2.0-dev libatk1.0-dev \
             libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev
 
+      # ── Build ──
+
       - name: Build TUI
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
@@ -60,7 +65,10 @@ jobs:
         if: matrix.gui
         run: cargo build --release --target ${{ matrix.target }} -p edit-gui
 
-      - name: Strip and rename binaries
+      # ── Strip (Unix only) ──
+
+      - name: Strip binaries (Unix)
+        if: runner.os != 'Windows'
         run: |
           STRIP_CMD="strip"
           if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
@@ -68,16 +76,103 @@ jobs:
           fi
 
           $STRIP_CMD "target/${{ matrix.target }}/release/edit"
-          cp "target/${{ matrix.target }}/release/edit" "edit-${{ matrix.target }}"
 
           if [[ "${{ matrix.gui }}" == "true" ]] && [[ -f "target/${{ matrix.target }}/release/edit-gui" ]]; then
             $STRIP_CMD "target/${{ matrix.target }}/release/edit-gui"
+          fi
+
+      # ── macOS Code Signing + Notarization ──
+
+      - name: Import Apple certificate
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE_BASE64 != ''
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_FILE=$(mktemp /tmp/cert.XXXXXX.p12)
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_FILE"
+
+          KEYCHAIN="build.keychain"
+          security create-keychain -p "" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          security import "$CERT_FILE" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN"
+          rm "$CERT_FILE"
+
+      - name: Sign macOS binaries
+        if: runner.os == 'macOS' && env.APPLE_TEAM_ID != ''
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          IDENTITY="Developer ID Application: ($APPLE_TEAM_ID)"
+
+          codesign --force --options runtime --sign "$IDENTITY" \
+            "target/${{ matrix.target }}/release/edit"
+
+          if [[ -f "target/${{ matrix.target }}/release/edit-gui" ]]; then
+            codesign --force --options runtime --sign "$IDENTITY" \
+              "target/${{ matrix.target }}/release/edit-gui"
+          fi
+
+      - name: Notarize macOS binaries
+        if: runner.os == 'macOS' && env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Notarize TUI
+          zip -j /tmp/edit-tui.zip "target/${{ matrix.target }}/release/edit"
+          xcrun notarytool submit /tmp/edit-tui.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait || echo "Notarization failed for TUI (non-fatal)"
+
+          # Notarize GUI
+          if [[ -f "target/${{ matrix.target }}/release/edit-gui" ]]; then
+            zip -j /tmp/edit-gui.zip "target/${{ matrix.target }}/release/edit-gui"
+            xcrun notarytool submit /tmp/edit-gui.zip \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_ID_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait || echo "Notarization failed for GUI (non-fatal)"
+          fi
+
+      # ── Package ──
+
+      - name: Rename binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp "target/${{ matrix.target }}/release/edit" "edit-${{ matrix.target }}"
+          if [[ "${{ matrix.gui }}" == "true" ]] && [[ -f "target/${{ matrix.target }}/release/edit-gui" ]]; then
             cp "target/${{ matrix.target }}/release/edit-gui" "edit-gui-${{ matrix.target }}"
           fi
 
-      - name: Upload release assets
+      - name: Rename binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cp "target/${{ matrix.target }}/release/edit.exe" "edit-${{ matrix.target }}.exe"
+          if [[ "${{ matrix.gui }}" == "true" ]] && [[ -f "target/${{ matrix.target }}/release/edit-gui.exe" ]]; then
+            cp "target/${{ matrix.target }}/release/edit-gui.exe" "edit-gui-${{ matrix.target }}.exe"
+          fi
+
+      # ── Upload ──
+
+      - name: Upload release assets (Unix)
+        if: runner.os != 'Windows'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             edit-${{ matrix.target }}
             edit-gui-${{ matrix.target }}
+
+      - name: Upload release assets (Windows)
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            edit-${{ matrix.target }}.exe
+            edit-gui-${{ matrix.target }}.exe

@@ -1098,14 +1098,11 @@
       <span id="install-text-hero">curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh</span>
       <button class="copy-btn" onclick="copyInstall(this, 'install-text-hero')">Copy</button>
     </div>
-    <p class="platform-note" style="margin-bottom:8px;">macOS (Apple Silicon &amp; Intel) &middot; Linux (x86_64 &amp; ARM64)</p>
-    <p style="font-size:0.75rem; color:var(--ed-text-tertiary); margin-bottom:32px;">
-      macOS: if you see &ldquo;Not Opened&rdquo;, right-click &rarr; Open, or run: <code style="background:var(--ed-bg-tertiary); padding:2px 6px; border-radius:3px;">xattr -cr edit-gui-*</code>
-    </p>
+    <p class="platform-note" style="margin-bottom:32px;">macOS (Apple Silicon &amp; Intel) &middot; Windows (x86_64) &middot; Linux (x86_64 &amp; ARM64)</p>
 
     <div class="hero-badge" style="margin-bottom:0;">
       <span class="pulse"></span>
-      Terminal (TUI) + Desktop (GUI) &middot; 12 languages &middot; live file watching &middot; zero dependencies
+      Terminal + Desktop &middot; macOS, Windows, Linux &middot; 12 languages &middot; live file watching
     </div>
   </section>
 
@@ -1642,37 +1639,33 @@
       const ua = navigator.userAgent.toLowerCase();
       const platform = navigator.platform || '';
       let target = null;
-      let name = 'your platform';
+      let ext = '';
+      let name = '';
 
       if (ua.includes('mac') || platform.includes('Mac')) {
-        // Check Apple Silicon vs Intel
-        // navigator.userAgent can't reliably detect this, so we default to arm64
-        // since most modern Macs are Apple Silicon
         target = 'aarch64-apple-darwin';
-        name = 'macOS';
-        // Try to detect Intel
-        if (platform === 'MacIntel' && !navigator.userAgent.includes('ARM')) {
-          // Could be Rosetta, but default to native
-          target = 'aarch64-apple-darwin';
-          name = 'macOS (Apple Silicon)';
-        }
+        name = 'for macOS';
+      } else if (ua.includes('win') || platform.includes('Win')) {
+        target = 'x86_64-pc-windows-msvc';
+        ext = '.exe';
+        name = 'for Windows';
       } else if (ua.includes('linux')) {
         target = 'x86_64-unknown-linux-gnu';
-        name = 'Linux';
+        name = 'for Linux';
       }
 
       if (target) {
         label.textContent = name;
-        // Set direct download URL — will resolve to latest release asset
         fetch('https://api.github.com/repos/elloloop/edit/releases/latest')
           .then(r => r.json())
           .then(data => {
-            const asset = (data.assets || []).find(a => a.name === 'edit-gui-' + target);
+            const assetName = 'edit-gui-' + target + ext;
+            const asset = (data.assets || []).find(a => a.name === assetName);
             if (asset) {
               btn.href = asset.browser_download_url;
             }
           })
-          .catch(() => {}); // Fallback: keep linking to releases page
+          .catch(() => {});
       }
     })();
 
