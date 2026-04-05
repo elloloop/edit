@@ -1930,7 +1930,7 @@
         fetch('https://api.github.com/repos/elloloop/edit/releases/latest')
           .then(r => r.json())
           .then(data => {
-            const asset = (data.assets || []).find(a => a.name === 'edit-gui-' + target + '.tar.gz');
+            const asset = (data.assets || []).find(a => a.name === 'edit-gui-' + target);
             if (asset) {
               btn.href = asset.browser_download_url;
             }
