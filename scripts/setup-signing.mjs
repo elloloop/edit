@@ -77,14 +77,11 @@ async function generateCSR() {
 // Step 2: Create certificate on Apple Developer portal
 // =============================================================================
 
-async function createCertificate(browser) {
+async function createCertificate(context) {
   info("Opening Apple Developer portal...");
   info("You will need to log in and complete 2FA.");
   console.log("");
 
-  const context = await browser.newContext({
-    acceptDownloads: true,
-  });
   const page = await context.newPage();
 
   // Go to certificates page
@@ -187,7 +184,7 @@ async function createCertificate(browser) {
     await ask("Press Enter when the file is saved...");
   }
 
-  await context.close();
+  await page.close();
 }
 
 // =============================================================================
@@ -220,12 +217,11 @@ async function convertToP12() {
 // Step 4: Create app-specific password on appleid.apple.com
 // =============================================================================
 
-async function createAppSpecificPassword(browser) {
+async function createAppSpecificPassword(context) {
   info("Opening appleid.apple.com to create an app-specific password...");
   info("You may need to log in again.");
   console.log("");
 
-  const context = await browser.newContext();
   const page = await context.newPage();
 
   await page.goto("https://account.apple.com/sign-in");
@@ -249,7 +245,7 @@ async function createAppSpecificPassword(browser) {
     "Paste the app-specific password Apple shows you: "
   );
 
-  await context.close();
+  await page.close();
   return appPassword;
 }
 
@@ -306,27 +302,30 @@ async function main() {
   // Step 1
   await generateCSR();
 
-  // Launch browser (persistent so login state carries over)
-  const browser = await chromium.launch({
+  // Launch using a persistent profile so cookies/login state are preserved
+  // across steps (cert creation → app-specific password)
+  const userDataDir = join(WORK_DIR, "browser-profile");
+  const browser = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
     slowMo: 300,
+    channel: "chrome", // Use your installed Chrome (has your existing sessions nearby)
   });
 
   try {
-    // Step 2
+    // Step 2: Create certificate on Apple Developer portal
     if (!existsSync(CER_FILE)) {
       await createCertificate(browser);
     } else {
       info("Certificate already downloaded, skipping portal step");
     }
 
-    // Step 3
+    // Step 3: Convert to .p12
     const p12Password = await convertToP12();
 
-    // Step 4
+    // Step 4: Create app-specific password
     const appPassword = await createAppSpecificPassword(browser);
 
-    // Step 5
+    // Step 5: Set all GitHub secrets
     await setGitHubSecrets(p12Password, appPassword);
   } finally {
     await browser.close();
