@@ -176,32 +176,56 @@ ERROR=$(echo "$API_RESPONSE" | node -e "
 if [ -n "$ERROR" ]; then
   warn "API error: $ERROR"
   echo ""
-  warn "This can happen if you already have 2 Developer ID certs (Apple's limit)."
-  warn "Check existing certs at: https://developer.apple.com/account/resources/certificates/list"
-  echo ""
-  read -rp "  Try listing existing certificates instead? [Y/n] " TRY_LIST
-  if [[ "${TRY_LIST:-y}" =~ ^[Yy]?$ ]]; then
-    info "Fetching existing Developer ID Application certificates..."
-    LIST_RESPONSE=$(curl -s "https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DEVELOPER_ID_APPLICATION" \
-      -H "Authorization: Bearer $JWT")
 
-    CERT_DATA=$(echo "$LIST_RESPONSE" | node -e "
-      const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-      if (d.data && d.data.length > 0) {
-        // Get the first valid cert
-        const cert = d.data[0];
-        console.log(cert.attributes.certificateContent);
-      }
-    " 2>/dev/null || echo "")
+  # Try listing existing certs first
+  info "Checking for existing Developer ID Application certificates..."
+  LIST_RESPONSE=$(curl -s "https://api.appstoreconnect.apple.com/v1/certificates?filter[certificateType]=DEVELOPER_ID_APPLICATION" \
+    -H "Authorization: Bearer $JWT" 2>/dev/null || echo "")
 
-    if [ -n "$CERT_DATA" ]; then
-      echo "$CERT_DATA" | base64 --decode > "$CER_FILE" 2>/dev/null
-      ok "Downloaded existing certificate"
-    else
-      fail "No existing Developer ID Application certificates found"
-    fi
+  CERT_DATA=$(echo "$LIST_RESPONSE" | node -e "
+    const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    if (d.data && d.data.length > 0) {
+      const cert = d.data[0];
+      console.log(cert.attributes.certificateContent);
+    }
+  " 2>/dev/null || echo "")
+
+  if [ -n "$CERT_DATA" ]; then
+    echo "$CERT_DATA" | base64 --decode > "$CER_FILE" 2>/dev/null
+    ok "Downloaded existing certificate from your account"
   else
-    fail "Certificate creation failed"
+    # Fall back to the portal
+    warn "API can't create or find the cert. Opening the portal instead."
+    echo ""
+    echo -n "$(pwd)/$CSR_FILE" | pbcopy 2>/dev/null && ok "CSR path copied to clipboard"
+    echo ""
+    open "https://developer.apple.com/account/resources/certificates/add" 2>/dev/null || true
+    echo ""
+    echo -e "  ${BOLD}In the browser:${NC}"
+    echo "    1. Select ${BOLD}Developer ID Application${NC}"
+    echo "    2. Click Continue"
+    echo "    3. Choose ${BOLD}G2 Sub-CA${NC} (default)"
+    echo "    4. Click Continue"
+    echo "    5. Upload this CSR: ${BOLD}$(pwd)/$CSR_FILE${NC}"
+    echo "    6. Click Continue → Download"
+    echo ""
+    read -rp "  Drag the downloaded .cer file here (or Enter for ~/Downloads): " CER_PATH
+    CER_PATH="${CER_PATH:-$HOME/Downloads/developerID_application.cer}"
+    CER_PATH="${CER_PATH//\'/}"; CER_PATH="${CER_PATH//\"/}"; CER_PATH="${CER_PATH## }"; CER_PATH="${CER_PATH%% }"
+
+    # Try common download names
+    if [ ! -f "$CER_PATH" ]; then
+      for f in "$HOME/Downloads/developerID_application.cer" \
+               "$HOME/Downloads/DeveloperIDApplication.cer" \
+               "$HOME/Downloads"/developer_id_application*.cer \
+               "$HOME/Downloads"/Developer*.cer; do
+        if [ -f "$f" ]; then CER_PATH="$f"; break; fi
+      done
+    fi
+
+    [ -f "$CER_PATH" ] || fail "Certificate not found: $CER_PATH"
+    cp "$CER_PATH" "$CER_FILE"
+    ok "Certificate saved"
   fi
 else
   # Extract the certificate content from the response
