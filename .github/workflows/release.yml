@@ -128,27 +128,28 @@ jobs:
 
       - name: Notarize macOS binaries
         if: runner.os == 'macOS' && env.APPLE_ID != ''
+        continue-on-error: true
+        timeout-minutes: 10
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # Notarize TUI
+          # Submit for notarization (don't wait — Apple processes async)
           zip -j /tmp/edit-tui.zip "target/${{ matrix.target }}/release/edit"
           xcrun notarytool submit /tmp/edit-tui.zip \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_ID_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
-            --wait || echo "Notarization failed for TUI (non-fatal)"
+            --no-wait || echo "Notarization submit failed for TUI (non-fatal)"
 
-          # Notarize GUI
           if [[ -f "target/${{ matrix.target }}/release/edit-gui" ]]; then
             zip -j /tmp/edit-gui.zip "target/${{ matrix.target }}/release/edit-gui"
             xcrun notarytool submit /tmp/edit-gui.zip \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_ID_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
-              --wait || echo "Notarization failed for GUI (non-fatal)"
+              --no-wait || echo "Notarization submit failed for GUI (non-fatal)"
           fi
 
       # ── Package ──
