@@ -2,13 +2,19 @@
 set -euo pipefail
 
 # edit — TUI code editor installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh
+# Downloads prebuilt binary from GitHub Releases. No build tools needed.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh
+#
+# Options (env vars):
+#   INSTALL_DIR  — where to install (default: /usr/local/bin)
 
 REPO="elloloop/edit"
 BINARY="edit"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
-# Colors
+# --- Colors ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -16,10 +22,10 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-info()  { echo -e "${CYAN}${BOLD}info${NC}  $1"; }
-ok()    { echo -e "${GREEN}${BOLD}  ok${NC}  $1"; }
-warn()  { echo -e "${YELLOW}${BOLD}warn${NC}  $1"; }
-fail()  { echo -e "${RED}${BOLD}fail${NC}  $1"; exit 1; }
+info() { echo -e "${CYAN}${BOLD}info${NC}  $1"; }
+ok()   { echo -e "${GREEN}${BOLD}  ok${NC}  $1"; }
+warn() { echo -e "${YELLOW}${BOLD}warn${NC}  $1"; }
+fail() { echo -e "${RED}${BOLD}fail${NC}  $1"; exit 1; }
 
 echo ""
 echo -e "${BOLD}  > edit${NC} installer"
@@ -37,126 +43,78 @@ case "$OS" in
 esac
 
 case "$ARCH" in
-  x86_64)  TARGET_ARCH="x86_64" ;;
-  aarch64) TARGET_ARCH="aarch64" ;;
-  arm64)   TARGET_ARCH="aarch64" ;;
-  *)       fail "Unsupported architecture: $ARCH" ;;
+  x86_64)        TARGET_ARCH="x86_64" ;;
+  aarch64|arm64) TARGET_ARCH="aarch64" ;;
+  *)             fail "Unsupported architecture: $ARCH" ;;
 esac
 
 TARGET="${TARGET_ARCH}-${PLATFORM}"
+ASSET="edit-${TARGET}.tar.gz"
+
 info "Detected platform: ${TARGET}"
 
-# --- Try downloading prebuilt binary from GitHub releases ---
-LATEST_URL="https://api.github.com/repos/${REPO}/releases/latest"
+# --- Find latest release ---
+info "Fetching latest release..."
 
-download_release() {
-  info "Checking for prebuilt binary..."
+RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null) || \
+  fail "Could not reach GitHub API. Check your internet connection."
 
-  if command -v curl &>/dev/null; then
-    RELEASE_JSON=$(curl -fsSL "$LATEST_URL" 2>/dev/null || echo "")
-  elif command -v wget &>/dev/null; then
-    RELEASE_JSON=$(wget -qO- "$LATEST_URL" 2>/dev/null || echo "")
-  else
-    return 1
-  fi
+TAG=$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
 
-  if [ -z "$RELEASE_JSON" ]; then
-    return 1
-  fi
+if [ -z "$TAG" ]; then
+  fail "No releases found. Visit https://github.com/${REPO}/releases"
+fi
 
-  # Extract download URL for our target
-  ASSET_URL=$(echo "$RELEASE_JSON" | grep -o "\"browser_download_url\": *\"[^\"]*${TARGET}[^\"]*\"" | head -1 | cut -d'"' -f4)
+ok "Latest release: ${TAG}"
 
-  if [ -z "$ASSET_URL" ]; then
-    return 1
-  fi
+# --- Download binary ---
+URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
 
-  info "Downloading from release: ${ASSET_URL}"
-  TMPDIR=$(mktemp -d)
-  TMPFILE="${TMPDIR}/${BINARY}"
+info "Downloading ${ASSET}..."
 
-  if curl -fsSL "$ASSET_URL" -o "$TMPFILE"; then
-    chmod +x "$TMPFILE"
-    return 0
-  fi
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 
-  return 1
-}
+HTTP_CODE=$(curl -fsSL -w '%{http_code}' -o "${TMPDIR}/${ASSET}" "$URL" 2>/dev/null) || true
 
-# --- Build from source with Cargo ---
-build_from_source() {
-  info "Building from source with Cargo..."
+if [ ! -f "${TMPDIR}/${ASSET}" ] || [ "$HTTP_CODE" = "404" ]; then
+  fail "Binary not found for ${TARGET}. Check https://github.com/${REPO}/releases/tag/${TAG}"
+fi
 
-  if ! command -v cargo &>/dev/null; then
-    warn "Cargo not found. Installing Rust toolchain via rustup..."
-    if command -v curl &>/dev/null; then
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    else
-      fail "Neither cargo nor curl found. Please install Rust: https://rustup.rs"
-    fi
-    source "$HOME/.cargo/env" 2>/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
-  fi
+ok "Downloaded $(du -h "${TMPDIR}/${ASSET}" | cut -f1 | xargs) from release ${TAG}"
 
-  ok "Cargo found: $(cargo --version)"
+# --- Extract ---
+tar xzf "${TMPDIR}/${ASSET}" -C "$TMPDIR" || fail "Failed to extract archive"
 
-  # Clone and build
-  TMPDIR=$(mktemp -d)
-  info "Cloning ${REPO}..."
-  git clone --depth 1 "https://github.com/${REPO}.git" "${TMPDIR}/edit-src" 2>/dev/null || \
-    fail "Failed to clone repository. Check your internet connection."
+if [ ! -f "${TMPDIR}/${BINARY}" ]; then
+  fail "Binary '${BINARY}' not found in archive"
+fi
 
-  info "Building (this may take a minute)..."
-  cd "${TMPDIR}/edit-src"
-  cargo build --release --quiet 2>/dev/null || cargo build --release
-  TMPFILE="${TMPDIR}/edit-src/target/release/${BINARY}"
-
-  if [ ! -f "$TMPFILE" ]; then
-    fail "Build failed — binary not found at ${TMPFILE}"
-  fi
-
-  ok "Build complete"
-}
+chmod +x "${TMPDIR}/${BINARY}"
 
 # --- Install ---
-install_binary() {
-  local src="$1"
-
-  # Try the install directory, fall back to ~/.local/bin
-  if [ -w "$INSTALL_DIR" ] || [ -w "$(dirname "$INSTALL_DIR")" ]; then
-    mkdir -p "$INSTALL_DIR"
-    cp "$src" "${INSTALL_DIR}/${BINARY}"
-    chmod +x "${INSTALL_DIR}/${BINARY}"
-    ok "Installed to ${INSTALL_DIR}/${BINARY}"
-  else
-    info "Need sudo to install to ${INSTALL_DIR}"
-    sudo mkdir -p "$INSTALL_DIR"
-    sudo cp "$src" "${INSTALL_DIR}/${BINARY}"
-    sudo chmod +x "${INSTALL_DIR}/${BINARY}"
-    ok "Installed to ${INSTALL_DIR}/${BINARY}"
-  fi
-}
-
-# --- Main ---
-
-TMPFILE=""
-
-# Try prebuilt binary first
-if download_release 2>/dev/null; then
-  ok "Downloaded prebuilt binary"
+if [ -w "$INSTALL_DIR" ]; then
+  mkdir -p "$INSTALL_DIR"
+  mv "${TMPDIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
+  ok "Installed to ${INSTALL_DIR}/${BINARY}"
+elif [ -w "$(dirname "$INSTALL_DIR")" ]; then
+  mkdir -p "$INSTALL_DIR"
+  mv "${TMPDIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
+  ok "Installed to ${INSTALL_DIR}/${BINARY}"
 else
-  info "No prebuilt binary found for ${TARGET}, building from source..."
-  build_from_source
+  info "Need sudo to install to ${INSTALL_DIR}"
+  sudo mkdir -p "$INSTALL_DIR"
+  sudo mv "${TMPDIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
+  sudo chmod +x "${INSTALL_DIR}/${BINARY}"
+  ok "Installed to ${INSTALL_DIR}/${BINARY}"
 fi
 
-if [ -n "$TMPFILE" ] && [ -f "$TMPFILE" ]; then
-  install_binary "$TMPFILE"
+# --- Verify ---
+if command -v "$BINARY" &>/dev/null; then
+  ok "Verified: $(which $BINARY)"
 else
-  fail "Installation failed — no binary to install"
-fi
-
-# Cleanup
-if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
-  rm -rf "$TMPDIR"
+  warn "${INSTALL_DIR} may not be in your PATH"
+  warn "Add this to your shell profile:  export PATH=\"${INSTALL_DIR}:\$PATH\""
 fi
 
 echo ""
