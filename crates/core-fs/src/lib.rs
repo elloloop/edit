@@ -76,6 +76,33 @@ impl FileTree {
         self.selected = new_sel as usize;
     }
 
+    /// Expand all parent directories of the given path and select it in the tree.
+    pub fn reveal_path(&mut self, target: &Path) {
+        let target = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+
+        // Expand every ancestor directory from root down to the file's parent
+        let mut ancestor = target.parent();
+        while let Some(dir) = ancestor {
+            if dir == self.root || dir.starts_with(&self.root) {
+                self.expanded.insert(dir.to_path_buf());
+            }
+            if dir == self.root {
+                break;
+            }
+            ancestor = dir.parent();
+        }
+
+        self.rebuild_entries();
+
+        // Select the entry matching the target path
+        for (i, entry) in self.entries.iter().enumerate() {
+            if entry.path == target {
+                self.selected = i;
+                return;
+            }
+        }
+    }
+
     fn rebuild_entries(&mut self) {
         self.entries.clear();
         self.collect_entries(&self.root.clone(), 0);

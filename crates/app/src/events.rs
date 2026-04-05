@@ -1,6 +1,7 @@
 use crate::keybindings;
-use crate::state::{ActivePicker, AppState};
-use crossterm::event::{self, Event, KeyEventKind};
+use crate::state::{ActivePicker, AppMode, AppState};
+use core_buffer::Direction;
+use crossterm::event::{self, Event, KeyEventKind, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use std::io::Stdout;
@@ -57,14 +58,50 @@ pub fn run(
 
         // Handle events
         if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                // Only handle key press events (not release/repeat on some terminals)
-                if key.kind == KeyEventKind::Press {
-                    keybindings::handle_key(state, key)?;
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        keybindings::handle_key(state, key)?;
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    handle_mouse(state, mouse.kind);
+                }
+                _ => {}
             }
         }
     }
 
     Ok(())
+}
+
+fn handle_mouse(state: &mut AppState, kind: MouseEventKind) {
+    // Only handle scroll in Normal mode
+    if state.mode != AppMode::Normal {
+        return;
+    }
+
+    let scroll_lines = 3;
+
+    match kind {
+        MouseEventKind::ScrollUp => {
+            if state.sidebar_focused {
+                state.file_tree.move_selection(-(scroll_lines as i32));
+            } else {
+                state
+                    .current_buffer_mut()
+                    .move_cursor(Direction::Up, scroll_lines);
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            if state.sidebar_focused {
+                state.file_tree.move_selection(scroll_lines as i32);
+            } else {
+                state
+                    .current_buffer_mut()
+                    .move_cursor(Direction::Down, scroll_lines);
+            }
+        }
+        _ => {}
+    }
 }

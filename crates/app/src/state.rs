@@ -119,6 +119,7 @@ impl AppState {
         for (i, buf) in self.buffers.iter().enumerate() {
             if buf.path.as_deref() == Some(path) {
                 self.active_buffer = i;
+                self.file_tree.reveal_path(path);
                 return Ok(());
             }
         }
@@ -134,6 +135,9 @@ impl AppState {
             hl.parse(&content);
             self.highlighters.insert(idx, hl);
         }
+
+        // Reveal file in sidebar — expand parent folders and select it
+        self.file_tree.reveal_path(path);
 
         Ok(())
     }
