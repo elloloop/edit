@@ -1,0 +1,20 @@
+[package]
+name = "edit"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "edit"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+anyhow = { workspace = true }
+core-buffer = { workspace = true }
+core-diff = { workspace = true }
+core-theme = { workspace = true }
+core-picker = { workspace = true }
+core-fs = { workspace = true }
+core-syntax = { workspace = true }
+ui-tui = { workspace = true }

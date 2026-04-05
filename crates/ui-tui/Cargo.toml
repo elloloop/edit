@@ -1,0 +1,14 @@
+[package]
+name = "ui-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = { workspace = true }
+unicode-width = { workspace = true }
+core-buffer = { workspace = true }
+core-diff = { workspace = true }
+core-theme = { workspace = true }
+core-picker = { workspace = true }
+core-fs = { workspace = true }
+core-syntax = { workspace = true }

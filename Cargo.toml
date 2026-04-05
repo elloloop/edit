@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core-buffer",
+    "crates/core-diff",
+    "crates/core-theme",
+    "crates/core-picker",
+    "crates/core-fs",
+    "crates/core-syntax",
+    "crates/ui-tui",
+    "crates/app",
+]
+
+[workspace.dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+ropey = "1.6"
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-yaml = "0.7"
+tree-sitter-md = "0.5"
+tree-sitter-bash = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-html = "0.23"
+similar = "2.6"
+nucleo = "0.5"
+ignore = "0.4"
+walkdir = "2.5"
+notify = "7.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+unicode-width = "0.2"
+
+core-buffer = { path = "crates/core-buffer" }
+core-diff = { path = "crates/core-diff" }
+core-theme = { path = "crates/core-theme" }
+core-picker = { path = "crates/core-picker" }
+core-fs = { path = "crates/core-fs" }
+core-syntax = { path = "crates/core-syntax" }
+ui-tui = { path = "crates/ui-tui" }
