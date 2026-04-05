@@ -60,7 +60,7 @@ jobs:
         if: matrix.gui
         run: cargo build --release --target ${{ matrix.target }} -p edit-gui
 
-      - name: Strip binaries
+      - name: Strip and rename binaries
         run: |
           STRIP_CMD="strip"
           if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
@@ -68,25 +68,16 @@ jobs:
           fi
 
           $STRIP_CMD "target/${{ matrix.target }}/release/edit"
+          cp "target/${{ matrix.target }}/release/edit" "edit-${{ matrix.target }}"
 
           if [[ "${{ matrix.gui }}" == "true" ]] && [[ -f "target/${{ matrix.target }}/release/edit-gui" ]]; then
             $STRIP_CMD "target/${{ matrix.target }}/release/edit-gui"
+            cp "target/${{ matrix.target }}/release/edit-gui" "edit-gui-${{ matrix.target }}"
           fi
-
-      - name: Package TUI
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../edit-${{ matrix.target }}.tar.gz edit
-
-      - name: Package GUI
-        if: matrix.gui
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../edit-gui-${{ matrix.target }}.tar.gz edit-gui
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            edit-${{ matrix.target }}.tar.gz
-            edit-gui-${{ matrix.target }}.tar.gz
+            edit-${{ matrix.target }}
+            edit-gui-${{ matrix.target }}

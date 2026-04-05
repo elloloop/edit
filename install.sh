@@ -49,7 +49,7 @@ case "$ARCH" in
 esac
 
 TARGET="${TARGET_ARCH}-${PLATFORM}"
-ASSET="edit-${TARGET}.tar.gz"
+ASSET="edit-${TARGET}"
 
 info "Detected platform: ${TARGET}"
 
@@ -75,20 +75,13 @@ info "Downloading ${ASSET}..."
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-HTTP_CODE=$(curl -fsSL -w '%{http_code}' -o "${TMPDIR}/${ASSET}" "$URL" 2>/dev/null) || true
+HTTP_CODE=$(curl -fsSL -w '%{http_code}' -o "${TMPDIR}/${BINARY}" "$URL" 2>/dev/null) || true
 
-if [ ! -f "${TMPDIR}/${ASSET}" ] || [ "$HTTP_CODE" = "404" ]; then
+if [ ! -f "${TMPDIR}/${BINARY}" ] || [ "$HTTP_CODE" = "404" ]; then
   fail "Binary not found for ${TARGET}. Check https://github.com/${REPO}/releases/tag/${TAG}"
 fi
 
-ok "Downloaded $(du -h "${TMPDIR}/${ASSET}" | cut -f1 | xargs) from release ${TAG}"
-
-# --- Extract ---
-tar xzf "${TMPDIR}/${ASSET}" -C "$TMPDIR" || fail "Failed to extract archive"
-
-if [ ! -f "${TMPDIR}/${BINARY}" ]; then
-  fail "Binary '${BINARY}' not found in archive"
-fi
+ok "Downloaded $(du -h "${TMPDIR}/${BINARY}" | cut -f1 | xargs) from release ${TAG}"
 
 chmod +x "${TMPDIR}/${BINARY}"
 
