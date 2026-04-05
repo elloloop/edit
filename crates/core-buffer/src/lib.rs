@@ -274,6 +274,17 @@ impl Buffer {
             self.cursor_col = len;
         }
     }
+
+    /// Reload buffer content from a string, preserving cursor position where possible.
+    pub fn reload(&mut self, content: &str) {
+        let old_line = self.cursor_line;
+        let old_col = self.cursor_col;
+        self.rope = Rope::from_str(content);
+        self.cursor_line = old_line.min(self.line_count().saturating_sub(1));
+        self.cursor_col = old_col;
+        self.clamp_cursor_col();
+        self.dirty = false;
+    }
 }
 
 fn detect_language(path: &Path) -> String {

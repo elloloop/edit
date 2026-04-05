@@ -1,11 +1,12 @@
 use core_buffer::Buffer;
 use core_diff::{ChangedFile, FileDiff};
-use core_fs::FileTree;
+use core_fs::{FileEvent, FileTree, FileWatcherHandle};
 use core_picker::{Picker, PickerPath};
 use core_syntax::Highlighter;
 use core_theme::Theme;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,10 @@ pub struct AppState {
     pub last_search: String,
     pub quit: bool,
     pub root_dir: PathBuf,
+    // File watching — auto-reload when agents change files on disk
+    #[allow(dead_code)]
+    file_watcher: Option<FileWatcherHandle>,
+    pub file_events: Option<Receiver<FileEvent>>,
 }
 
 impl AppState {
@@ -92,6 +97,10 @@ impl AppState {
         // Load changed files for diff
         let changed_files = core_diff::changed_files(&root_dir).unwrap_or_default();
 
+        // Start file watcher — watches for changes made by agents/editors
+        let (tx, rx) = std::sync::mpsc::channel();
+        let watcher = core_fs::watch_directory(&root_dir, tx).ok();
+
         Ok(Self {
             buffers,
             active_buffer: 0,
@@ -111,6 +120,8 @@ impl AppState {
             last_search: String::new(),
             quit: false,
             root_dir,
+            file_watcher: watcher,
+            file_events: Some(rx),
         })
     }
 
@@ -144,7 +155,6 @@ impl AppState {
 
     pub fn close_active_tab(&mut self) {
         if self.buffers.len() <= 1 {
-            // Don't close the last buffer, just clear it
             self.buffers[0] = Buffer::from_string("");
             self.highlighters.remove(&0);
             self.active_buffer = 0;
@@ -154,7 +164,6 @@ impl AppState {
         self.highlighters.remove(&self.active_buffer);
         self.buffers.remove(self.active_buffer);
 
-        // Re-index highlighters
         let mut new_highlighters = HashMap::new();
         for (idx, hl) in self.highlighters.drain() {
             let new_idx = if idx > self.active_buffer {
@@ -205,5 +214,51 @@ impl AppState {
                 self.diffs.insert(path.clone(), diff);
             }
         }
+    }
+
+    /// Reload a buffer from disk if it's open and not dirty.
+    /// Called when the file watcher detects external changes (e.g., from AI agents).
+    pub fn reload_if_open(&mut self, path: &Path) {
+        let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+        // Find the buffer
+        let idx = self.buffers.iter().position(|buf| {
+            buf.path.as_ref().map_or(false, |p| {
+                p.canonicalize().unwrap_or_else(|_| p.clone()) == canon
+            })
+        });
+
+        let Some(idx) = idx else { return };
+
+        // Don't overwrite unsaved user edits
+        if self.buffers[idx].dirty {
+            return;
+        }
+
+        // Read new content
+        let content = match std::fs::read_to_string(&canon) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        // Skip if content hasn't actually changed
+        if content == self.buffers[idx].content() {
+            return;
+        }
+
+        let file_name = self.buffers[idx].file_name();
+        self.buffers[idx].reload(&content);
+
+        // Reparse syntax highlighting
+        if let Some(hl) = self.highlighters.get_mut(&idx) {
+            hl.parse(&content);
+        }
+
+        // Re-compute diff if diff mode is active
+        if self.diff_mode {
+            self.compute_diff_for_current();
+        }
+
+        self.set_status(&format!("Reloaded: {file_name}"));
     }
 }

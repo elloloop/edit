@@ -1,9 +1,11 @@
 use crate::keybindings;
 use crate::state::{ActivePicker, AppMode, AppState};
 use core_buffer::Direction;
+use core_fs::FileEvent;
 use crossterm::event::{self, Event, KeyEventKind, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use std::collections::HashSet;
 use std::io::Stdout;
 use std::time::Duration;
 use ui_tui::layout;
@@ -24,8 +26,11 @@ pub fn run(
             }
         }
 
+        // Process file system events — auto-reload files changed by agents
+        process_file_events(state);
+
         // Ensure cursor is visible in viewport
-        let height = terminal.size()?.height.saturating_sub(3) as usize; // tabs + command bar (2 lines)
+        let height = terminal.size()?.height.saturating_sub(3) as usize;
         state.current_buffer_mut().ensure_cursor_visible(height);
 
         // Render
@@ -56,7 +61,7 @@ pub fn run(
             );
         })?;
 
-        // Handle events
+        // Handle input events
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
                 Event::Key(key) => {
@@ -75,8 +80,27 @@ pub fn run(
     Ok(())
 }
 
+/// Drain file watcher channel and reload any open buffers that changed on disk.
+fn process_file_events(state: &mut AppState) {
+    let mut changed_paths = HashSet::new();
+
+    if let Some(ref rx) = state.file_events {
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                FileEvent::Modified(path) | FileEvent::Created(path) => {
+                    changed_paths.insert(path);
+                }
+                FileEvent::Deleted(_) => {}
+            }
+        }
+    }
+
+    for path in changed_paths {
+        state.reload_if_open(&path);
+    }
+}
+
 fn handle_mouse(state: &mut AppState, kind: MouseEventKind) {
-    // Only handle scroll in Normal mode
     if state.mode != AppMode::Normal {
         return;
     }

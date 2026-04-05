@@ -1,0 +1,18 @@
+[package]
+name = "edit-gui"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "edit-gui"
+path = "src/main.rs"
+
+[dependencies]
+core-buffer = { path = "../core-buffer" }
+core-syntax = { path = "../core-syntax" }
+core-diff = { path = "../core-diff" }
+core-theme = { path = "../core-theme" }
+core-picker = { path = "../core-picker" }
+core-fs = { path = "../core-fs" }
+eframe = "0.31"
+anyhow.workspace = true

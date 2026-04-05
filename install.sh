@@ -117,6 +117,33 @@ else
   warn "Add this to your shell profile:  export PATH=\"${INSTALL_DIR}:\$PATH\""
 fi
 
+# --- Set as default EDITOR ---
+SHELL_RC=""
+if [ -f "$HOME/.zshrc" ]; then
+  SHELL_RC="$HOME/.zshrc"
+elif [ -f "$HOME/.bashrc" ]; then
+  SHELL_RC="$HOME/.bashrc"
+fi
+
+if [ -n "$SHELL_RC" ]; then
+  if ! grep -q 'EDITOR=edit' "$SHELL_RC" 2>/dev/null; then
+    echo "" >> "$SHELL_RC"
+    echo "# Set edit as default editor (for git, codex, etc.)" >> "$SHELL_RC"
+    echo "export EDITOR=edit" >> "$SHELL_RC"
+    echo "export VISUAL=edit" >> "$SHELL_RC"
+    ok "Set EDITOR=edit in ${SHELL_RC}"
+  fi
+fi
+
+# --- Install .desktop file on Linux ---
+if [ "$OS" = "Linux" ]; then
+  DESKTOP_DIR="$HOME/.local/share/applications"
+  DESKTOP_URL="https://raw.githubusercontent.com/${REPO}/main/edit.desktop"
+  mkdir -p "$DESKTOP_DIR"
+  curl -fsSL "$DESKTOP_URL" -o "${DESKTOP_DIR}/edit.desktop" 2>/dev/null && \
+    ok "Installed edit.desktop for file associations" || true
+fi
+
 echo ""
 echo -e "${GREEN}${BOLD}  Installation complete!${NC}"
 echo ""
@@ -125,4 +152,5 @@ echo -e "  Run ${BOLD}edit <file>${NC} to open a file."
 echo -e "  Run ${BOLD}edit <dir>${NC} to browse a directory."
 echo ""
 echo -e "  Type ${BOLD}help${NC} in the command bar for all commands."
+echo -e "  Set as default editor: tools like git, codex, claude will use it."
 echo ""

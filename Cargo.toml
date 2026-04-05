@@ -8,6 +8,7 @@ members = [
     "crates/core-fs",
     "crates/core-syntax",
     "crates/ui-tui",
+    "crates/ui-gui",
     "crates/app",
 ]
 
@@ -46,3 +47,4 @@ core-picker = { path = "crates/core-picker" }
 core-fs = { path = "crates/core-fs" }
 core-syntax = { path = "crates/core-syntax" }
 ui-tui = { path = "crates/ui-tui" }
+eframe = "0.31"

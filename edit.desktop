@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=edit
+Comment=A lightweight code editor for the age of AI agents
+Exec=edit-gui %F
+Terminal=false
+Type=Application
+Categories=Development;TextEditor;
+MimeType=text/plain;text/x-c;text/x-c++;text/x-python;text/x-java;text/x-rust;text/x-go;text/javascript;text/typescript;text/html;text/css;text/x-yaml;text/x-toml;application/json;text/markdown;text/x-shellscript;
+StartupWMClass=edit
+Keywords=editor;code;programming;development;

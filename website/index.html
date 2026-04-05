@@ -1106,43 +1106,86 @@
   </section>
 
   <!-- ========================================
-       Terminal Demo
+       Side-by-Side Demo — Agent + edit
        ======================================== -->
   <section class="demo-section">
-    <div class="terminal">
-      <div class="terminal-chrome">
-        <span class="terminal-dot red"></span>
-        <span class="terminal-dot yellow"></span>
-        <span class="terminal-dot green"></span>
-        <span class="terminal-title">edit &mdash; Terminal</span>
-        <span style="width: 36px;"></span>
+    <div style="max-width:1100px; margin:0 auto; display:flex; gap:12px;">
+      <!-- Left: Claude Code / Agent terminal -->
+      <div class="terminal" style="flex:1;">
+        <div class="terminal-chrome">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Claude Code</span>
+          <span style="width:36px;"></span>
+        </div>
+        <div class="terminal-body" style="min-height:320px;">
+          <div class="line" style="animation-delay:0.2s"><span class="t-prompt">$ </span><span class="t-cmd">claude</span></div>
+          <div class="line" style="animation-delay:1.0s"><span class="t-info">&gt; Add a health check endpoint</span></div>
+          <div class="line" style="animation-delay:2.0s">&nbsp;</div>
+          <div class="line" style="animation-delay:2.5s"><span class="t-dim">  I'll add a /health endpoint...</span></div>
+          <div class="line" style="animation-delay:3.5s">&nbsp;</div>
+          <div class="line" style="animation-delay:4.0s"><span class="t-ok">  &check;</span> <span class="t-info">Writing </span><span class="t-arg">src/health.rs</span></div>
+          <div class="line" style="animation-delay:5.0s"><span class="t-ok">  &check;</span> <span class="t-info">Updating </span><span class="t-arg">src/main.rs</span></div>
+          <div class="line" style="animation-delay:6.0s">&nbsp;</div>
+          <div class="line" style="animation-delay:6.5s"><span class="t-dim">  Added health check endpoint at</span></div>
+          <div class="line" style="animation-delay:6.5s"><span class="t-dim">  /health with uptime + version.</span></div>
+          <div class="line" style="animation-delay:7.5s">&nbsp;</div>
+          <div class="line" style="animation-delay:8.0s"><span class="t-stat">  +28 -2</span><span class="t-info"> across </span><span class="t-stat">2 files</span></div>
+        </div>
       </div>
-      <div class="terminal-body">
-        <div class="line" style="animation-delay:0.2s"><span class="t-prompt">$ </span><span class="t-cmd">edit</span> <span class="t-arg">src/</span></div>
-        <div class="line" style="animation-delay:0.8s"><span class="t-dim">&nbsp; ... TUI launches with sidebar + syntax highlighting ...</span></div>
-        <div class="line" style="animation-delay:1.4s">&nbsp;</div>
-        <div class="line" style="animation-delay:1.8s"><span class="t-info">  &gt; </span><span class="t-cmd">open</span></div>
-        <div class="line" style="animation-delay:2.3s"><span class="t-ok">  &check;</span><span class="t-info"> Fuzzy picker &mdash; type to filter 142 files</span></div>
-        <div class="line" style="animation-delay:2.9s"><span class="t-info">    main.rs &middot; keybindings.rs &middot; state.rs &middot; ...</span></div>
-        <div class="line" style="animation-delay:3.4s">&nbsp;</div>
-        <div class="line" style="animation-delay:3.8s"><span class="t-info">  &gt; </span><span class="t-cmd">/handle_key</span></div>
-        <div class="line" style="animation-delay:4.3s"><span class="t-ok">  &check;</span><span class="t-info"> Found 'handle_key'</span></div>
-        <div class="line" style="animation-delay:4.8s"><span class="t-info">    Jumped to </span><span class="t-stat">Ln 6, Col 8</span></div>
-        <div class="line" style="animation-delay:5.4s">&nbsp;</div>
-        <div class="line" style="animation-delay:5.8s"><span class="t-info">  &gt; </span><span class="t-cmd">goto execute_command</span></div>
-        <div class="line" style="animation-delay:6.3s"><span class="t-ok">  &check;</span><span class="t-info"> Found: fn execute_command_input</span></div>
-        <div class="line" style="animation-delay:6.8s"><span class="t-info">    Jumped to </span><span class="t-stat">Ln 168</span></div>
-        <div class="line" style="animation-delay:7.4s">&nbsp;</div>
-        <div class="line" style="animation-delay:7.8s"><span class="t-info">  &gt; </span><span class="t-cmd">diff</span></div>
-        <div class="line" style="animation-delay:8.3s"><span class="t-ok">  &check;</span><span class="t-info"> Diff view on &mdash; side-by-side with git HEAD</span></div>
-        <div class="line" style="animation-delay:8.8s"><span class="t-info">    </span><span class="t-stat">+42 -8</span><span class="t-info"> across </span><span class="t-stat">3 hunks</span></div>
-        <div class="line" style="animation-delay:9.4s">&nbsp;</div>
-        <div class="line" style="animation-delay:9.8s"><span class="t-info">  &gt; </span><span class="t-cmd">save</span></div>
-        <div class="line" style="animation-delay:10.3s"><span class="t-ok">  &check;</span><span class="t-info"> Saved</span></div>
-        <div class="line" style="animation-delay:10.8s">&nbsp;</div>
-        <div class="line" style="animation-delay:11.2s"><span class="t-info">  &gt; </span><span class="t-cmd">exit</span></div>
+
+      <!-- Right: edit auto-updating -->
+      <div class="terminal" style="flex:1;">
+        <div class="terminal-chrome">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">edit &mdash; live view</span>
+          <span style="width:36px;"></span>
+        </div>
+        <div class="terminal-body" style="min-height:320px; padding:0;">
+          <!-- Mock TUI -->
+          <div style="padding:4px 8px; background:var(--ed-bg-tertiary); border-bottom:1px solid var(--ed-border); font-size:0.6875rem; display:flex; gap:8px;">
+            <span style="padding:2px 8px; background:var(--ed-bg); border:1px solid var(--ed-border); border-radius:3px; color:var(--ed-text);">main.rs</span>
+            <span class="line" style="animation-delay:4.5s; padding:2px 8px; color:var(--ed-warning);">health.rs *</span>
+          </div>
+          <div style="display:flex; font-size:0.6875rem;">
+            <!-- Sidebar -->
+            <div style="width:90px; border-right:1px solid var(--ed-border); padding:6px;">
+              <div style="color:var(--ed-text-tertiary); margin-bottom:2px;">Files</div>
+              <div style="color:var(--ed-text-secondary); padding:1px 4px;">&#9660; src/</div>
+              <div style="color:var(--ed-text-secondary); padding:1px 4px;">&nbsp;&nbsp;main.rs</div>
+              <div class="line" style="animation-delay:4.5s; padding:1px 4px; background:color-mix(in srgb, var(--ed-accent) 12%, transparent); color:var(--ed-text); border-radius:2px;">&nbsp;&nbsp;health.rs <span style="color:var(--ed-warning); font-size:0.5625rem;">+</span></div>
+            </div>
+            <!-- Code view -->
+            <div style="flex:1; padding:6px 10px; line-height:1.7;">
+              <div class="line" style="animation-delay:4.5s"><span style="color:var(--ed-text-tertiary)">1 </span><span style="color:var(--syn-keyword)">use</span> <span style="color:var(--syn-variable)">axum</span>::<span style="color:var(--syn-type)">Json</span>;</div>
+              <div class="line" style="animation-delay:4.8s"><span style="color:var(--ed-text-tertiary)">2 </span><span style="color:var(--syn-keyword)">use</span> <span style="color:var(--syn-variable)">serde</span>::<span style="color:var(--syn-type)">Serialize</span>;</div>
+              <div class="line" style="animation-delay:5.1s"><span style="color:var(--ed-text-tertiary)">3 </span></div>
+              <div class="line" style="animation-delay:5.4s"><span style="color:var(--ed-text-tertiary)">4 </span><span style="color:var(--syn-comment)">#[derive(Serialize)]</span></div>
+              <div class="line" style="animation-delay:5.7s"><span style="color:var(--ed-text-tertiary)">5 </span><span style="color:var(--syn-keyword)">pub struct</span> <span style="color:var(--syn-type)">Health</span> {</div>
+              <div class="line" style="animation-delay:6.0s"><span style="color:var(--ed-text-tertiary)">6 </span>&nbsp;&nbsp;<span style="color:var(--syn-variable)">status</span>: <span style="color:var(--syn-type)">String</span>,</div>
+              <div class="line" style="animation-delay:6.3s"><span style="color:var(--ed-text-tertiary)">7 </span>&nbsp;&nbsp;<span style="color:var(--syn-variable)">uptime</span>: <span style="color:var(--syn-type)">u64</span>,</div>
+              <div class="line" style="animation-delay:6.6s"><span style="color:var(--ed-text-tertiary)">8 </span>}</div>
+              <div class="line" style="animation-delay:6.9s"><span style="color:var(--ed-text-tertiary)">9 </span></div>
+              <div class="line" style="animation-delay:7.2s"><span style="color:var(--ed-text-tertiary)">10</span> <span style="color:var(--syn-keyword)">pub async fn</span> <span style="color:var(--syn-function)">health</span>() -&gt; ... {</div>
+            </div>
+          </div>
+          <!-- Command bar -->
+          <div style="border-top:1px solid var(--ed-border); font-size:0.6875rem;">
+            <div style="padding:3px 8px; background:var(--ed-bg-tertiary); color:var(--ed-text-tertiary);">health.rs &middot; rust &middot; Ln 1, Col 1 &middot; 10 lines</div>
+            <div style="padding:3px 8px; display:flex; align-items:center; gap:4px;">
+              <span style="color:var(--ed-success);">&#10095;</span>
+              <span class="line" style="animation-delay:8.5s; color:var(--ed-text);">Reloaded: health.rs</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+    <p style="text-align:center; margin-top:20px; font-size:0.8125rem; color:var(--ed-text-tertiary);">
+      Claude writes code on the left. edit auto-reloads on the right. No refresh, no re-open &mdash; files update instantly via filesystem watching.
+    </p>
   </section>
 
   <!-- ========================================
@@ -1746,8 +1789,9 @@
             <div><span style="color:var(--syn-type);">core-theme</span> &nbsp;&nbsp; VS Code Dark+ inspired color system</div>
             <div><span style="color:var(--syn-type);">core-picker</span> &nbsp; Nucleo-powered fuzzy file matcher</div>
             <div><span style="color:var(--syn-type);">core-fs</span> &nbsp;&nbsp;&nbsp;&nbsp; File tree with .gitignore support</div>
-            <div><span style="color:var(--syn-type);">ui-tui</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Ratatui rendering layer</div>
-            <div><span style="color:var(--syn-type);">app</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Main binary, event loop, keybindings</div>
+            <div><span style="color:var(--syn-type);">ui-tui</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Ratatui TUI rendering layer</div>
+            <div><span style="color:var(--syn-type);">ui-gui</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; egui GUI with embedded terminals</div>
+            <div><span style="color:var(--syn-type);">app</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; TUI binary, event loop, keybindings</div>
           </div>
         </div>
       </div>
@@ -1759,16 +1803,39 @@
        ======================================== -->
   <section class="install-section" id="install">
     <div class="container">
-      <div class="install-block reveal">
-        <h2>Start using edit in 10 seconds</h2>
-        <p class="section-desc">One command. No package manager required.</p>
-        <div style="margin-top:36px;">
-          <div class="install-cmd">
-            <span class="dollar">$</span>
-            <span id="install-text-cta">curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh</span>
-            <button class="copy-btn" onclick="copyInstall(this, 'install-text-cta')">Copy</button>
+      <div style="max-width:900px; margin:0 auto;">
+        <div style="text-align:center; margin-bottom:48px;" class="reveal">
+          <h2>Choose your interface</h2>
+          <p class="section-desc">Same core engine. Two ways to use it.</p>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+          <!-- TUI -->
+          <div class="install-block reveal" style="max-width:none; margin:0;">
+            <div style="display:inline-flex; align-items:center; gap:8px; padding:4px 14px; background:var(--accent-subtle); border:1px solid var(--accent-border); border-radius:6px; font-size:0.75rem; font-weight:600; color:var(--ed-accent); margin-bottom:20px;">AVAILABLE NOW</div>
+            <h3 style="font-size:1.5rem; font-weight:700; margin-bottom:8px;">edit <span style="color:var(--ed-text-tertiary); font-weight:400;">TUI</span></h3>
+            <p style="font-size:0.875rem; color:var(--ed-text-secondary); line-height:1.7; margin-bottom:24px;">
+              Terminal-based. Runs over SSH. &lt;2MB binary.<br>
+              Open in a split pane next to your AI agent.
+            </p>
+            <div class="install-cmd" style="margin-bottom:12px;">
+              <span class="dollar">$</span>
+              <span id="install-text-cta">curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh</span>
+              <button class="copy-btn" onclick="copyInstall(this, 'install-text-cta')">Copy</button>
+            </div>
+            <p class="platform-note" style="margin-bottom:0;">macOS &amp; Linux &middot; Apple Silicon, Intel, ARM64</p>
           </div>
-          <p class="platform-note" style="margin-bottom:0;">Works on macOS (Apple Silicon &amp; Intel) and Linux (x86_64 &amp; ARM64).</p>
+          <!-- GUI -->
+          <div class="install-block reveal" style="max-width:none; margin:0; opacity:0.85;">
+            <div style="display:inline-flex; align-items:center; gap:8px; padding:4px 14px; background:var(--ed-bg-tertiary); border:1px solid var(--ed-border); border-radius:6px; font-size:0.75rem; font-weight:600; color:var(--ed-text-tertiary); margin-bottom:20px;">COMING SOON</div>
+            <h3 style="font-size:1.5rem; font-weight:700; margin-bottom:8px;">edit <span style="color:var(--ed-text-tertiary); font-weight:400;">GUI</span></h3>
+            <p style="font-size:0.875rem; color:var(--ed-text-secondary); line-height:1.7; margin-bottom:24px;">
+              Native desktop app. Built-in terminal for Claude&nbsp;Code, opencode, Goose, or any agent. File viewer + agent side-by-side.
+            </p>
+            <div style="padding:14px 20px; background:var(--ed-bg); border:1px solid var(--ed-border); border-radius:10px; font-size:0.8125rem; color:var(--ed-text-tertiary); margin-bottom:12px;">
+              Same core engine &middot; Registers as default editor &middot; Opens from Codex, Claude, etc.
+            </div>
+            <p class="platform-note" style="margin-bottom:0;">macOS, Linux &amp; Windows</p>
+          </div>
         </div>
       </div>
     </div>
