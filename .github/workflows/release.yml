@@ -105,13 +105,24 @@ jobs:
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          IDENTITY="Developer ID Application: ($APPLE_TEAM_ID)"
+          # Find the imported Developer ID Application identity
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          if [[ -z "$IDENTITY" ]]; then
+            echo "No Developer ID Application identity found"
+            security find-identity -v build.keychain
+            exit 1
+          fi
+
+          echo "Signing with: $IDENTITY"
 
           codesign --force --options runtime --sign "$IDENTITY" \
+            --keychain build.keychain \
             "target/${{ matrix.target }}/release/edit"
 
           if [[ -f "target/${{ matrix.target }}/release/edit-gui" ]]; then
             codesign --force --options runtime --sign "$IDENTITY" \
+              --keychain build.keychain \
               "target/${{ matrix.target }}/release/edit-gui"
           fi
 
