@@ -16,12 +16,16 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-latest
+            gui: true
           - target: x86_64-apple-darwin
             os: macos-latest
+            gui: true
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+            gui: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
+            gui: false
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -37,28 +41,52 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Build
+      - name: Install GUI dependencies (Linux)
+        if: matrix.gui && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libssl-dev libgtk-3-dev libglib2.0-dev libatk1.0-dev \
+            libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev
+
+      - name: Build TUI
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p edit
 
-      - name: Strip binary
+      - name: Build GUI
+        if: matrix.gui
+        run: cargo build --release --target ${{ matrix.target }} -p edit-gui
+
+      - name: Strip binaries
         run: |
-          BIN="target/${{ matrix.target }}/release/edit"
+          STRIP_CMD="strip"
           if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            aarch64-linux-gnu-strip "$BIN"
-          else
-            strip "$BIN"
+            STRIP_CMD="aarch64-linux-gnu-strip"
           fi
 
-      - name: Package
+          $STRIP_CMD "target/${{ matrix.target }}/release/edit"
+
+          if [[ "${{ matrix.gui }}" == "true" ]] && [[ -f "target/${{ matrix.target }}/release/edit-gui" ]]; then
+            $STRIP_CMD "target/${{ matrix.target }}/release/edit-gui"
+          fi
+
+      - name: Package TUI
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../edit-${{ matrix.target }}.tar.gz edit
 
-      - name: Upload release asset
+      - name: Package GUI
+        if: matrix.gui
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../edit-gui-${{ matrix.target }}.tar.gz edit-gui
+
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: edit-${{ matrix.target }}.tar.gz
+          files: |
+            edit-${{ matrix.target }}.tar.gz
+            edit-gui-${{ matrix.target }}.tar.gz

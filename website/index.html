@@ -1825,16 +1825,25 @@
             <p class="platform-note" style="margin-bottom:0;">macOS &amp; Linux &middot; Apple Silicon, Intel, ARM64</p>
           </div>
           <!-- GUI -->
-          <div class="install-block reveal" style="max-width:none; margin:0; opacity:0.85;">
-            <div style="display:inline-flex; align-items:center; gap:8px; padding:4px 14px; background:var(--ed-bg-tertiary); border:1px solid var(--ed-border); border-radius:6px; font-size:0.75rem; font-weight:600; color:var(--ed-text-tertiary); margin-bottom:20px;">COMING SOON</div>
+          <div class="install-block reveal" style="max-width:none; margin:0;">
+            <div style="display:inline-flex; align-items:center; gap:8px; padding:4px 14px; background:var(--accent-subtle); border:1px solid var(--accent-border); border-radius:6px; font-size:0.75rem; font-weight:600; color:var(--ed-accent); margin-bottom:20px;">AVAILABLE NOW</div>
             <h3 style="font-size:1.5rem; font-weight:700; margin-bottom:8px;">edit <span style="color:var(--ed-text-tertiary); font-weight:400;">GUI</span></h3>
             <p style="font-size:0.875rem; color:var(--ed-text-secondary); line-height:1.7; margin-bottom:24px;">
               Native desktop app. Built-in terminal for Claude&nbsp;Code, opencode, Goose, or any agent. File viewer + agent side-by-side.
             </p>
-            <div style="padding:14px 20px; background:var(--ed-bg); border:1px solid var(--ed-border); border-radius:10px; font-size:0.8125rem; color:var(--ed-text-tertiary); margin-bottom:12px;">
-              Same core engine &middot; Registers as default editor &middot; Opens from Codex, Claude, etc.
+            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
+              <a href="https://github.com/elloloop/edit/releases/latest" class="btn-primary" style="font-size:0.8125rem; padding:10px 20px; border-radius:8px;" id="gui-download-btn">
+                <svg style="width:16px;height:16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download for <span id="gui-platform-label">your platform</span>
+              </a>
+              <a href="https://github.com/elloloop/edit/releases/latest" class="btn-secondary" style="font-size:0.8125rem; padding:10px 20px; border-radius:8px;">
+                All downloads
+              </a>
             </div>
-            <p class="platform-note" style="margin-bottom:0;">macOS, Linux &amp; Windows</p>
+            <p style="font-size:0.8125rem; color:var(--ed-text-secondary); margin-bottom:12px;">
+              Same core engine &middot; Registers as default editor &middot; Opens from Codex, Claude, etc.
+            </p>
+            <p class="platform-note" style="margin-bottom:0;">macOS (Apple Silicon &amp; Intel) &middot; Linux x86_64</p>
           </div>
         </div>
       </div>
@@ -1886,6 +1895,49 @@
         if (!wasOpen) item.classList.add('open');
       });
     });
+
+    // Auto-detect platform for GUI download button
+    (function() {
+      const btn = document.getElementById('gui-download-btn');
+      const label = document.getElementById('gui-platform-label');
+      if (!btn || !label) return;
+
+      const ua = navigator.userAgent.toLowerCase();
+      const platform = navigator.platform || '';
+      let target = null;
+      let name = 'your platform';
+
+      if (ua.includes('mac') || platform.includes('Mac')) {
+        // Check Apple Silicon vs Intel
+        // navigator.userAgent can't reliably detect this, so we default to arm64
+        // since most modern Macs are Apple Silicon
+        target = 'aarch64-apple-darwin';
+        name = 'macOS';
+        // Try to detect Intel
+        if (platform === 'MacIntel' && !navigator.userAgent.includes('ARM')) {
+          // Could be Rosetta, but default to native
+          target = 'aarch64-apple-darwin';
+          name = 'macOS (Apple Silicon)';
+        }
+      } else if (ua.includes('linux')) {
+        target = 'x86_64-unknown-linux-gnu';
+        name = 'Linux';
+      }
+
+      if (target) {
+        label.textContent = name;
+        // Set direct download URL — will resolve to latest release asset
+        fetch('https://api.github.com/repos/elloloop/edit/releases/latest')
+          .then(r => r.json())
+          .then(data => {
+            const asset = (data.assets || []).find(a => a.name === 'edit-gui-' + target + '.tar.gz');
+            if (asset) {
+              btn.href = asset.browser_download_url;
+            }
+          })
+          .catch(() => {}); // Fallback: keep linking to releases page
+      }
+    })();
 
     // Scroll reveal
     const observer = new IntersectionObserver((entries) => {
