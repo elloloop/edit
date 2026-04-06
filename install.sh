@@ -54,7 +54,20 @@ esac
 TARGET="${TARGET_ARCH}-${PLATFORM}"
 ASSET="edit-${TARGET}"
 
-info "Detected platform: ${TARGET}"
+# --- Detect WSL2 ---
+IS_WSL=false
+if [ "$OS" = "Linux" ]; then
+  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ] || grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
+    IS_WSL=true
+  fi
+fi
+
+if [ "$IS_WSL" = "true" ]; then
+  info "Detected WSL2 environment (${WSL_DISTRO_NAME:-WSL})"
+  info "Detected platform: ${TARGET}"
+else
+  info "Detected platform: ${TARGET}"
+fi
 
 # --- Find latest release ---
 info "Fetching latest release..."
@@ -131,8 +144,8 @@ if [ -n "$SHELL_RC" ]; then
   fi
 fi
 
-# --- Install .desktop file on Linux ---
-if [ "$OS" = "Linux" ]; then
+# --- Install .desktop file on Linux (skip for WSL2 — no native desktop environment) ---
+if [ "$OS" = "Linux" ] && [ "$IS_WSL" = "false" ]; then
   DESKTOP_DIR="$HOME/.local/share/applications"
   DESKTOP_URL="https://raw.githubusercontent.com/${REPO}/main/edit.desktop"
   mkdir -p "$DESKTOP_DIR"
@@ -150,3 +163,12 @@ echo ""
 echo -e "  Type ${BOLD}help${NC} in the command bar for all commands."
 echo -e "  Set as default editor: tools like git, codex, claude will use it."
 echo ""
+
+if [ "$IS_WSL" = "true" ]; then
+  echo -e "  ${BOLD}WSL2 tips:${NC}"
+  echo -e "  · Use Windows Terminal for the best experience."
+  echo -e "  · Access Windows files via ${BOLD}/mnt/c/${NC} paths."
+  echo -e "  · For clipboard support, ensure ${BOLD}xclip${NC} or ${BOLD}xsel${NC} is installed,"
+  echo -e "    or use ${BOLD}clip.exe${NC} directly for Windows clipboard access."
+  echo ""
+fi
