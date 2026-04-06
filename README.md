@@ -8,6 +8,16 @@ highlighting, and first-class diff review.
 
 ## Install
 
+**Linux / macOS / WSL2:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/elloloop/edit/main/install.sh | sh
+```
+
+**Windows (native):** Download the `.exe` from [Releases](https://github.com/elloloop/edit/releases/latest).
+
+Or build from source:
+
 ```bash
 cargo install --path crates/app
 ```
