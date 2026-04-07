@@ -3,84 +3,122 @@ use core_fs::FileTree;
 use core_syntax::Highlighter;
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 
-struct TerminalPanel {
-    label: String,
+struct TerminalPane {
+    title: String,
     output: String,
-    #[allow(dead_code)]
     input: String,
-    #[allow(dead_code)]
     process: Option<Child>,
+    stdin: Option<ChildStdin>,
     rx: Option<mpsc::Receiver<String>>,
 }
 
-impl TerminalPanel {
-    fn new(label: &str) -> Self {
+impl TerminalPane {
+    fn shell(cwd: &Path) -> Self {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let label = Path::new(&shell)
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or(shell.clone());
+        let mut pane = Self::empty(&label);
+        pane.spawn(&shell, &[], cwd);
+        pane
+    }
+
+    fn empty(label: &str) -> Self {
         Self {
-            label: label.to_string(),
+            title: label.to_string(),
             output: String::new(),
             input: String::new(),
             process: None,
+            stdin: None,
             rx: None,
         }
     }
 
-    fn spawn(&mut self, cmd: &str, args: &[&str]) {
+    fn spawn(&mut self, cmd: &str, args: &[&str], cwd: &Path) {
+        self.output.clear();
+        self.input.clear();
+
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
 
-        let cmd_owned = cmd.to_string();
-        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-
-        std::thread::spawn(move || {
-            let child = Command::new(&cmd_owned)
-                .args(&args_owned)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn();
-
-            match child {
-                Ok(mut c) => {
-                    use std::io::Read;
-                    if let Some(ref mut stdout) = c.stdout {
-                        let mut buf = [0u8; 4096];
-                        loop {
-                            match stdout.read(&mut buf) {
-                                Ok(0) => break,
-                                Ok(n) => {
-                                    let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                                    if tx.send(text).is_err() {
-                                        break;
-                                    }
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(format!("Failed to start {cmd_owned}: {e}\n"));
-                }
+        let mut child = match Command::new(cmd)
+            .args(args)
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(err) => {
+                let _ = tx.send(format!("Failed to start {cmd}: {err}\n"));
+                return;
             }
-        });
+        };
+
+        self.stdin = child.stdin.take();
+        self.process = Some(child);
+
+        if let Some(stdout) = self.process.as_mut().and_then(|child| child.stdout.take()) {
+            let tx = tx.clone();
+            std::thread::spawn(move || read_stream(stdout, tx));
+        }
+        if let Some(stderr) = self.process.as_mut().and_then(|child| child.stderr.take()) {
+            let tx = tx.clone();
+            std::thread::spawn(move || read_stream(stderr, tx));
+        }
     }
 
     fn poll(&mut self) {
         if let Some(ref rx) = self.rx {
             while let Ok(text) = rx.try_recv() {
                 self.output.push_str(&text);
-                if self.output.len() > 50_000 {
-                    let trim = self.output.len() - 40_000;
+                if self.output.len() > 80_000 {
+                    let trim = self.output.len() - 60_000;
                     self.output = self.output[trim..].to_string();
                 }
             }
         }
     }
+
+    fn send_input(&mut self) {
+        let line = self.input.trim_end().to_string();
+        if line.is_empty() {
+            return;
+        }
+        if let Some(stdin) = self.stdin.as_mut() {
+            let _ = stdin.write_all(line.as_bytes());
+            let _ = stdin.write_all(b"\n");
+            let _ = stdin.flush();
+            self.output.push_str(&format!("$ {line}\n"));
+        }
+        self.input.clear();
+    }
 }
 
+fn read_stream<R: Read + Send + 'static>(mut stream: R, tx: mpsc::Sender<String>) {
+    let mut buf = [0u8; 4096];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                if tx.send(text).is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 enum AgentKind {
     Claude,
     OpenCode,
@@ -89,30 +127,35 @@ enum AgentKind {
 }
 
 impl AgentKind {
-    fn label(&self) -> &str {
+    fn label(&self) -> &'static str {
         match self {
             Self::Claude => "Claude Code",
             Self::OpenCode => "opencode",
             Self::Goose => "Goose",
-            Self::Shell => "Terminal",
+            Self::Shell => "Shell",
         }
     }
 
-    fn command(&self) -> (&str, Vec<&str>) {
+    fn command(&self) -> (&'static str, Vec<&'static str>) {
         match self {
             Self::Claude => ("claude", vec![]),
             Self::OpenCode => ("opencode", vec![]),
             Self::Goose => ("goose", vec![]),
             Self::Shell => {
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-                let shell: &str = Box::leak(shell.into_boxed_str());
+                let shell: &'static str = Box::leak(shell.into_boxed_str());
                 (shell, vec![])
             }
         }
     }
 }
 
-#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TerminalSplit {
+    Vertical,
+    Horizontal,
+}
+
 struct EditApp {
     buffers: Vec<Buffer>,
     active_buffer: usize,
@@ -125,10 +168,10 @@ struct EditApp {
     status_message: Option<String>,
     wrap_lines: bool,
     editing: bool,
-
-    agent_panel: TerminalPanel,
-    aux_terminal: Option<TerminalPanel>,
-    show_aux_terminal: bool,
+    terminal_split: TerminalSplit,
+    terminal_panes: Vec<TerminalPane>,
+    active_terminal: usize,
+    terminal_ratio: f32,
 
     file_rx: Option<mpsc::Receiver<core_fs::FileEvent>>,
     #[allow(dead_code)]
@@ -188,7 +231,7 @@ impl EditApp {
             buffers.push(Buffer::from_string(""));
         }
 
-        if let Some(path) = buffers.first().and_then(|buf| buf.path.as_deref()) {
+        if let Some(path) = buffers.first().and_then(|buffer| buffer.path.as_deref()) {
             if let Some(tree) = file_tree.as_mut() {
                 tree.reveal_path(path);
             }
@@ -204,17 +247,30 @@ impl EditApp {
             file_tree,
             highlighters,
             sidebar_visible: true,
-            root_dir,
+            root_dir: root_dir.clone(),
             command_input: String::new(),
             status_message: None,
             wrap_lines: false,
             editing: false,
-            agent_panel: TerminalPanel::new("Agent"),
-            aux_terminal: None,
-            show_aux_terminal: false,
+            terminal_split: TerminalSplit::Vertical,
+            terminal_panes: vec![TerminalPane::shell(&root_dir)],
+            active_terminal: 0,
+            terminal_ratio: 0.47,
             file_rx: Some(rx),
             file_watcher: watcher,
         }
+    }
+
+    fn current_buffer(&self) -> &Buffer {
+        &self.buffers[self.active_buffer]
+    }
+
+    fn current_buffer_mut(&mut self) -> &mut Buffer {
+        &mut self.buffers[self.active_buffer]
+    }
+
+    fn active_terminal_mut(&mut self) -> Option<&mut TerminalPane> {
+        self.terminal_panes.get_mut(self.active_terminal)
     }
 
     fn open_file(&mut self, path: &Path) {
@@ -257,13 +313,17 @@ impl EditApp {
         if let Some(ref rx) = self.file_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
-                    core_fs::FileEvent::Modified(p) | core_fs::FileEvent::Created(p) => {
-                        changed.push(p);
+                    core_fs::FileEvent::Modified(path) | core_fs::FileEvent::Created(path) => {
+                        changed.push(path);
                         refresh_tree = true;
                     }
                     core_fs::FileEvent::Deleted(_) => refresh_tree = true,
                 }
             }
+        }
+
+        for pane in &mut self.terminal_panes {
+            pane.poll();
         }
 
         for path in changed {
@@ -298,19 +358,30 @@ impl EditApp {
         }
     }
 
-    fn launch_agent(&mut self, kind: AgentKind) {
-        let label = kind.label().to_string();
+    fn launch_in_active_terminal(&mut self, kind: AgentKind) {
         let (cmd, args) = kind.command();
-        self.agent_panel = TerminalPanel::new(&label);
-        self.agent_panel.spawn(cmd, &args);
+        let cwd = self.root_dir.clone();
+        if let Some(pane) = self.active_terminal_mut() {
+            pane.title = kind.label().to_string();
+            pane.spawn(cmd, &args, &cwd);
+        }
     }
 
-    fn current_buffer(&self) -> &Buffer {
-        &self.buffers[self.active_buffer]
+    fn split_terminal(&mut self, split: TerminalSplit) {
+        self.terminal_split = split;
+        self.terminal_panes
+            .push(TerminalPane::shell(&self.root_dir));
+        self.active_terminal = self.terminal_panes.len() - 1;
     }
 
-    fn current_buffer_mut(&mut self) -> &mut Buffer {
-        &mut self.buffers[self.active_buffer]
+    fn close_active_terminal(&mut self) {
+        if self.terminal_panes.len() <= 1 {
+            return;
+        }
+        self.terminal_panes.remove(self.active_terminal);
+        if self.active_terminal >= self.terminal_panes.len() {
+            self.active_terminal = self.terminal_panes.len() - 1;
+        }
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -391,8 +462,7 @@ impl EditApp {
                 }
             }
             other if other.starts_with("open ") => {
-                let path = self.root_dir.join(other["open ".len()..].trim());
-                self.open_file(&path);
+                self.open_file(&self.root_dir.join(other["open ".len()..].trim()));
             }
             _ => {
                 self.status_message = Some(format!("Unknown command: {input}"));
@@ -416,46 +486,49 @@ impl EditApp {
 
 impl eframe::App for EditApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.agent_panel.poll();
-        if let Some(ref mut aux) = self.aux_terminal {
-            aux.poll();
-        }
         self.process_file_events();
         self.handle_shortcuts(ctx);
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Quit").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-                ui.menu_button("Agent", |ui| {
-                    if ui.button("Launch Claude Code").clicked() {
-                        self.launch_agent(AgentKind::Claude);
+                ui.menu_button("Terminal", |ui| {
+                    if ui.button("New Shell").clicked() {
+                        self.launch_in_active_terminal(AgentKind::Shell);
                         ui.close_menu();
                     }
-                    if ui.button("Launch opencode").clicked() {
-                        self.launch_agent(AgentKind::OpenCode);
+                    if ui.button("Launch Claude").clicked() {
+                        self.launch_in_active_terminal(AgentKind::Claude);
                         ui.close_menu();
                     }
                     if ui.button("Launch Goose").clicked() {
-                        self.launch_agent(AgentKind::Goose);
+                        self.launch_in_active_terminal(AgentKind::Goose);
+                        ui.close_menu();
+                    }
+                    if ui.button("Launch opencode").clicked() {
+                        self.launch_in_active_terminal(AgentKind::OpenCode);
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("Launch Shell").clicked() {
-                        self.launch_agent(AgentKind::Shell);
+                    if ui.button("Split Vertical").clicked() {
+                        self.split_terminal(TerminalSplit::Vertical);
+                        ui.close_menu();
+                    }
+                    if ui.button("Split Horizontal").clicked() {
+                        self.split_terminal(TerminalSplit::Horizontal);
+                        ui.close_menu();
+                    }
+                    if ui.button("Close Active Split").clicked() {
+                        self.close_active_terminal();
                         ui.close_menu();
                     }
                 });
                 ui.menu_button("View", |ui| {
                     if ui
                         .button(if self.sidebar_visible {
-                            "Hide Sidebar"
+                            "Hide File Tree"
                         } else {
-                            "Show Sidebar"
+                            "Show File Tree"
                         })
                         .clicked()
                     {
@@ -474,6 +547,9 @@ impl eframe::App for EditApp {
                         ui.close_menu();
                     }
                 });
+                if ui.button("Quit").clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             });
         });
 
@@ -509,60 +585,160 @@ impl eframe::App for EditApp {
             });
         });
 
-        if self.show_aux_terminal {
-            egui::TopBottomPanel::bottom("aux_terminal")
-                .default_height(200.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong("Terminal");
-                        if ui.small_button("x").clicked() {
-                            self.show_aux_terminal = false;
-                        }
-                    });
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            if let Some(ref aux) = self.aux_terminal {
-                                ui.style_mut().override_font_id =
-                                    Some(egui::FontId::monospace(12.0));
-                                ui.label(&aux.output);
-                            }
-                        });
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let total_width = ui.available_width();
+            let left_width = (total_width * self.terminal_ratio).max(320.0);
+            let right_width = (total_width - left_width - 8.0).max(420.0);
+            let breadcrumb = self.breadcrumb();
+
+            ui.horizontal(|ui| {
+                ui.allocate_ui(egui::vec2(left_width, ui.available_height()), |ui| {
+                    render_terminal_workspace(
+                        ui,
+                        &mut self.terminal_panes,
+                        &mut self.active_terminal,
+                        self.terminal_split,
+                    );
                 });
+
+                ui.separator();
+
+                ui.allocate_ui(egui::vec2(right_width, ui.available_height()), |ui| {
+                    render_editor_workspace(
+                        ui,
+                        &mut self.buffers,
+                        &mut self.active_buffer,
+                        self.compare_buffer,
+                        self.sidebar_visible,
+                        self.file_tree.as_mut(),
+                        self.wrap_lines,
+                        self.editing,
+                        &breadcrumb,
+                    );
+                });
+            });
+        });
+    }
+}
+
+fn render_terminal_workspace(
+    ui: &mut egui::Ui,
+    panes: &mut [TerminalPane],
+    active_terminal: &mut usize,
+    split: TerminalSplit,
+) {
+    ui.horizontal(|ui| {
+        ui.strong("Terminal");
+        ui.separator();
+        ui.label(match split {
+            TerminalSplit::Vertical => "vertical split",
+            TerminalSplit::Horizontal => "horizontal split",
+        });
+    });
+    ui.separator();
+
+    match split {
+        TerminalSplit::Vertical => {
+            ui.columns(panes.len().max(1), |columns| {
+                for (idx, pane) in panes.iter_mut().enumerate() {
+                    if let Some(column) = columns.get_mut(idx) {
+                        render_terminal_pane(column, pane, idx, active_terminal);
+                    }
+                }
+            });
         }
+        TerminalSplit::Horizontal => {
+            let pane_count = panes.len();
+            for (idx, pane) in panes.iter_mut().enumerate() {
+                render_terminal_pane(ui, pane, idx, active_terminal);
+                if idx + 1 < pane_count {
+                    ui.separator();
+                }
+            }
+        }
+    }
+}
 
-        if self.sidebar_visible {
-            let sidebar_entries: Vec<(PathBuf, String, bool, usize, Option<char>, bool)> = self
-                .file_tree
-                .as_ref()
-                .map(|tree| {
-                    tree.visible_entries()
-                        .iter()
-                        .map(|e| {
-                            (
-                                e.path.clone(),
-                                e.name.clone(),
-                                e.is_dir,
-                                e.depth,
-                                e.git_status,
-                                tree.expanded.contains(&e.path),
-                            )
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+fn render_terminal_pane(
+    ui: &mut egui::Ui,
+    pane: &mut TerminalPane,
+    idx: usize,
+    active_terminal: &mut usize,
+) {
+    let selected = *active_terminal == idx;
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(selected, egui::RichText::new(&pane.title).strong())
+                .clicked()
+            {
+                *active_terminal = idx;
+            }
+        });
+        ui.separator();
+        egui::ScrollArea::vertical()
+            .stick_to_bottom(true)
+            .max_height(420.0)
+            .show(ui, |ui| {
+                ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
+                ui.add(
+                    egui::TextEdit::multiline(&mut pane.output)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(22)
+                        .desired_width(f32::INFINITY)
+                        .interactive(false),
+                );
+            });
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut pane.input)
+                .font(egui::TextStyle::Monospace)
+                .desired_width(f32::INFINITY)
+                .hint_text("Run a command in this pane"),
+        );
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            pane.send_input();
+        }
+    });
+}
 
-            let mut clicked_file = None;
-            let mut toggle_dir = None;
-            egui::SidePanel::left("sidebar")
-                .default_width(220.0)
-                .show(ctx, |ui| {
+#[allow(clippy::too_many_arguments)]
+fn render_editor_workspace(
+    ui: &mut egui::Ui,
+    buffers: &mut [Buffer],
+    active_buffer: &mut usize,
+    compare_buffer: Option<usize>,
+    sidebar_visible: bool,
+    file_tree: Option<&mut FileTree>,
+    wrap_lines: bool,
+    editing: bool,
+    breadcrumb: &str,
+) {
+    ui.horizontal(|ui| {
+        let editor_total_width = ui.available_width();
+        let sidebar_width = if sidebar_visible { 220.0 } else { 0.0 };
+        if let Some(tree) = file_tree {
+            if sidebar_visible {
+                let entries: Vec<(PathBuf, String, bool, usize, Option<char>, bool)> = tree
+                    .visible_entries()
+                    .iter()
+                    .map(|entry| {
+                        (
+                            entry.path.clone(),
+                            entry.name.clone(),
+                            entry.is_dir,
+                            entry.depth,
+                            entry.git_status,
+                            tree.expanded.contains(&entry.path),
+                        )
+                    })
+                    .collect();
+                let mut clicked_file = None;
+                let mut toggle_dir = None;
+                ui.allocate_ui(egui::vec2(sidebar_width, ui.available_height()), |ui| {
                     ui.heading("Files");
                     ui.separator();
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (path, name, is_dir, depth, git_status, expanded) in &sidebar_entries {
+                        for (path, name, is_dir, depth, git_status, expanded) in &entries {
                             let indent = "  ".repeat(*depth);
                             let icon = if *is_dir {
                                 if *expanded {
@@ -573,10 +749,12 @@ impl eframe::App for EditApp {
                             } else {
                                 file_icon(name)
                             };
-                            let git = git_status.map_or(" ".to_string(), |s| s.to_string());
-                            let text = format!("{indent}{icon} {git} {name}");
-                            let color = git_color(*git_status);
-                            let rich = egui::RichText::new(text).color(color).monospace();
+                            let git =
+                                git_status.map_or(" ".to_string(), |status| status.to_string());
+                            let label = format!("{indent}{icon} {git} {name}");
+                            let rich = egui::RichText::new(label)
+                                .color(git_color(*git_status))
+                                .monospace();
                             if ui.selectable_label(false, rich).clicked() {
                                 if *is_dir {
                                     toggle_dir = Some(path.clone());
@@ -588,96 +766,71 @@ impl eframe::App for EditApp {
                     });
                 });
 
-            if let Some(path) = toggle_dir {
-                if let Some(tree) = self.file_tree.as_mut() {
+                if let Some(path) = toggle_dir {
                     if let Some(idx) = tree.entries.iter().position(|entry| entry.path == path) {
                         tree.toggle_expand(idx);
                     }
                 }
-            }
-            if let Some(path) = clicked_file {
-                self.open_file(&path);
+                if let Some(path) = clicked_file {
+                    if let Some(idx) = buffers
+                        .iter()
+                        .position(|buffer| buffer.path.as_deref() == Some(&path))
+                    {
+                        *active_buffer = idx;
+                    } else if let Ok(buf) = Buffer::from_file(&path) {
+                        buffers[*active_buffer] = buf;
+                    }
+                }
+                ui.separator();
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let available = ui.available_size();
-            let has_agent_output = !self.agent_panel.output.is_empty();
-
-            ui.horizontal(|ui| {
-                let editor_width = if has_agent_output {
-                    available.x * 0.55
-                } else {
-                    available.x
-                };
-                ui.allocate_ui(egui::vec2(editor_width, available.y), |ui| {
-                    let conflicts = conflicting_names(&self.buffers);
-                    ui.horizontal_wrapped(|ui| {
-                        for (i, buf) in self.buffers.iter().enumerate() {
-                            let name = display_tab_name(buf, &conflicts);
-                            let dirty = if buf.dirty { " *" } else { "" };
-                            if ui
-                                .selectable_label(i == self.active_buffer, format!("{name}{dirty}"))
-                                .clicked()
-                            {
-                                self.active_buffer = i;
-                            }
+        let editor_width = editor_total_width - sidebar_width;
+        ui.allocate_ui(
+            egui::vec2(editor_width.max(320.0), ui.available_height()),
+            |ui| {
+                let conflicts = conflicting_names(buffers);
+                ui.horizontal_wrapped(|ui| {
+                    for (idx, buffer) in buffers.iter().enumerate() {
+                        let title = display_tab_name(buffer, &conflicts);
+                        let dirty = if buffer.dirty { " *" } else { "" };
+                        if ui
+                            .selectable_label(*active_buffer == idx, format!("{title}{dirty}"))
+                            .clicked()
+                        {
+                            *active_buffer = idx;
                         }
-                    });
-                    ui.separator();
-                    ui.label(egui::RichText::new(self.breadcrumb()).monospace().small());
-                    ui.separator();
-
-                    if let Some(compare_idx) = self.compare_buffer {
-                        ui.columns(2, |columns| {
-                            render_editor_pane(
-                                &mut columns[0],
-                                &mut self.buffers[self.active_buffer],
-                                self.editing,
-                                self.wrap_lines,
-                                true,
-                            );
-                            render_editor_pane(
-                                &mut columns[1],
-                                &mut self.buffers[compare_idx],
-                                false,
-                                self.wrap_lines,
-                                false,
-                            );
-                        });
-                    } else {
-                        render_editor_pane(
-                            ui,
-                            &mut self.buffers[self.active_buffer],
-                            self.editing,
-                            self.wrap_lines,
-                            true,
-                        );
                     }
                 });
+                ui.separator();
+                ui.label(egui::RichText::new(breadcrumb).small().monospace());
+                ui.separator();
 
-                if has_agent_output {
-                    ui.separator();
-                    ui.allocate_ui(
-                        egui::vec2(available.x - editor_width - 8.0, available.y),
-                        |ui| {
-                            ui.horizontal(|ui| {
-                                ui.strong(&self.agent_panel.label);
-                            });
-                            ui.separator();
-                            egui::ScrollArea::vertical()
-                                .stick_to_bottom(true)
-                                .show(ui, |ui| {
-                                    ui.style_mut().override_font_id =
-                                        Some(egui::FontId::monospace(12.0));
-                                    ui.label(&self.agent_panel.output);
-                                });
-                        },
-                    );
+                if let Some(compare_idx) = compare_buffer {
+                    ui.columns(2, |columns| {
+                        render_editor_pane(
+                            &mut columns[0],
+                            &mut buffers[*active_buffer],
+                            editing,
+                            wrap_lines,
+                            true,
+                        );
+                        if compare_idx < buffers.len() {
+                            render_editor_pane(
+                                &mut columns[1],
+                                &mut buffers[compare_idx],
+                                false,
+                                wrap_lines,
+                                false,
+                            );
+                        }
+                    });
+                } else {
+                    render_editor_pane(ui, &mut buffers[*active_buffer], editing, wrap_lines, true);
                 }
-            });
-        });
-    }
+            },
+        );
+    });
 }
 
 fn render_editor_pane(
@@ -722,12 +875,13 @@ fn render_buffer_contents(ui: &mut egui::Ui, buffer: &mut Buffer, editing: bool,
                 buffer.replace_content(&text);
             }
         } else {
-            let editor = egui::TextEdit::multiline(&mut text)
-                .font(egui::TextStyle::Monospace)
-                .desired_width(width)
-                .desired_rows(30)
-                .interactive(false);
-            ui.add(editor);
+            ui.add(
+                egui::TextEdit::multiline(&mut text)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(width)
+                    .desired_rows(30)
+                    .interactive(false),
+            );
         }
     });
 }
@@ -804,7 +958,7 @@ fn main() -> eframe::Result {
     let paths: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1400.0, 900.0])
+            .with_inner_size([1600.0, 960.0])
             .with_title("edit"),
         ..Default::default()
     };
