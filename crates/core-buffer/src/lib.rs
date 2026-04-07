@@ -351,6 +351,14 @@ impl Buffer {
         self.undo_pos = 0;
     }
 
+    pub fn replace_content(&mut self, content: &str) {
+        self.prepare_history();
+        self.rope = Rope::from_str(content);
+        self.fix_cursor_after_history_change();
+        self.dirty = true;
+        self.save_snapshot();
+    }
+
     pub fn undo(&mut self) -> bool {
         if self.undo_pos == 0 {
             return false;
