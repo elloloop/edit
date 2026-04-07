@@ -16,6 +16,7 @@ pub struct FileEntry {
 
 pub struct FileTree {
     pub root: PathBuf,
+    pub roots: Vec<PathBuf>,
     pub entries: Vec<FileEntry>,
     pub expanded: HashSet<PathBuf>,
     pub selected: usize,
@@ -24,21 +25,50 @@ pub struct FileTree {
 
 impl FileTree {
     pub fn build(root: &Path) -> anyhow::Result<Self> {
-        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        Self::build_multi(&[root.to_path_buf()], root)
+    }
+
+    pub fn build_multi(roots: &[PathBuf], base_root: &Path) -> anyhow::Result<Self> {
+        let roots: Vec<PathBuf> = roots
+            .iter()
+            .map(|root| root.canonicalize().unwrap_or_else(|_| root.to_path_buf()))
+            .collect();
+        let root = base_root
+            .canonicalize()
+            .unwrap_or_else(|_| base_root.to_path_buf());
         let git_statuses = load_git_statuses(&root);
 
         let mut tree = Self {
             root: root.clone(),
+            roots: roots.clone(),
             entries: Vec::new(),
             expanded: HashSet::new(),
             selected: 0,
             git_statuses,
         };
 
-        // Expand root by default
-        tree.expanded.insert(root.clone());
+        for root in roots {
+            tree.expanded.insert(root);
+        }
         tree.rebuild_entries();
         Ok(tree)
+    }
+
+    pub fn refresh(&mut self) {
+        self.git_statuses = load_git_statuses(&self.root);
+        let selected_path = self.selected_entry().map(|entry| entry.path.clone());
+        self.rebuild_entries();
+        if let Some(selected_path) = selected_path {
+            if let Some(idx) = self
+                .entries
+                .iter()
+                .position(|entry| entry.path == selected_path)
+            {
+                self.selected = idx;
+            } else if !self.entries.is_empty() {
+                self.selected = self.selected.min(self.entries.len().saturating_sub(1));
+            }
+        }
     }
 
     pub fn toggle_expand(&mut self, idx: usize) {
@@ -78,7 +108,9 @@ impl FileTree {
 
     /// Expand all parent directories of the given path and select it in the tree.
     pub fn reveal_path(&mut self, target: &Path) {
-        let target = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+        let target = target
+            .canonicalize()
+            .unwrap_or_else(|_| target.to_path_buf());
 
         // Expand every ancestor directory from root down to the file's parent
         let mut ancestor = target.parent();
@@ -105,7 +137,24 @@ impl FileTree {
 
     fn rebuild_entries(&mut self) {
         self.entries.clear();
-        self.collect_entries(&self.root.clone(), 0);
+        for root in self.roots.clone() {
+            if self.roots.len() > 1 {
+                let name = root
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| root.display().to_string());
+                self.entries.push(FileEntry {
+                    path: root.clone(),
+                    name,
+                    is_dir: true,
+                    depth: 0,
+                    git_status: None,
+                });
+            }
+            if self.expanded.contains(&root) {
+                self.collect_entries(&root, usize::from(self.roots.len() > 1));
+            }
+        }
     }
 
     fn collect_entries(&mut self, dir: &Path, depth: usize) {
@@ -175,7 +224,10 @@ fn load_git_statuses(root: &Path) -> std::collections::HashMap<PathBuf, char> {
                 if line.len() < 4 {
                     continue;
                 }
-                let status = line.chars().nth(1).unwrap_or(line.chars().next().unwrap_or(' '));
+                let status = line
+                    .chars()
+                    .nth(1)
+                    .unwrap_or(line.chars().next().unwrap_or(' '));
                 let status_char = match status {
                     '?' => '?',
                     'M' => 'M',

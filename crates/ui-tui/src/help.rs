@@ -28,8 +28,13 @@ pub fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
                 ("open or o", "Open file picker"),
                 ("save or s", "Save current file"),
                 ("close", "Close current tab"),
+                ("compare <a> <b>", "Compare two files"),
                 ("diff or d", "Toggle diff view"),
+                ("changes", "Open changed files picker"),
+                ("grep <pattern>", "Search across workspace"),
+                ("edit", "Enter edit mode"),
                 ("sidebar", "Toggle sidebar"),
+                ("wrap", "Toggle word wrap"),
                 ("next / prev", "Switch tabs"),
                 ("top / bottom", "Jump to start/end"),
                 ("exit or q", "Quit"),
@@ -40,7 +45,9 @@ pub fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
             "Navigation (always active)",
             vec![
                 ("Arrow keys", "Move cursor"),
+                ("Ctrl-Left / Right", "Move by word"),
                 ("Home / End", "Start / end of line"),
+                ("Ctrl-Home / End", "Start / end of file"),
                 ("Page Up / Down", "Scroll by page"),
                 ("F3 / Shift-F3", "Next / prev search result"),
                 ("F8", "Next diff hunk"),
@@ -50,6 +57,8 @@ pub fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
             "Shortcuts",
             vec![
                 ("Ctrl-S", "Save"),
+                ("Ctrl-Z", "Undo"),
+                ("Ctrl-Shift-Z", "Redo"),
                 ("Ctrl-P", "Open file picker"),
                 ("Ctrl-D", "Toggle diff view"),
                 ("Ctrl-G", "Go to line (prefills :)"),
@@ -68,9 +77,7 @@ pub fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         .fg(theme.syntax_keyword)
         .bg(theme.picker_bg)
         .add_modifier(Modifier::BOLD);
-    let desc_style = Style::default()
-        .fg(theme.picker_fg)
-        .bg(theme.picker_bg);
+    let desc_style = Style::default().fg(theme.picker_fg).bg(theme.picker_bg);
     let header_style = Style::default()
         .fg(theme.picker_match)
         .bg(theme.picker_bg)
@@ -95,10 +102,7 @@ pub fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
                 Span::styled(format!("    {key:<22}"), key_style),
                 Span::styled((*desc).to_string(), desc_style),
             ]);
-            line.render(
-                Rect::new(inner.x, y, inner.width, 1),
-                f.buffer_mut(),
-            );
+            line.render(Rect::new(inner.x, y, inner.width, 1), f.buffer_mut());
             y += 1;
         }
 

@@ -39,21 +39,52 @@ pub fn render_sidebar(f: &mut Frame, area: Rect, tree: &FileTree, theme: &Theme)
         };
 
         let indent = "  ".repeat(entry.depth);
-        let icon = if entry.is_dir { "+" } else { " " };
-        let git_marker = entry.git_status.map_or(String::new(), |c| format!(" [{c}]"));
-
-        let label = format!("{indent}{icon} {}{git_marker}", entry.name);
+        let icon = if entry.is_dir {
+            if tree.expanded.contains(&entry.path) {
+                "▾"
+            } else {
+                "▸"
+            }
+        } else {
+            file_icon(&entry.name)
+        };
+        let git_marker = entry.git_status.map_or(" ".to_string(), |c| format!("{c}"));
+        let label = format!("{indent}{icon} {git_marker} {}", entry.name);
         let max_width = inner.width as usize;
         let display: String = label.chars().take(max_width).collect();
 
-        let style = Style::default().fg(fg).bg(bg);
+        let style = Style::default()
+            .fg(git_color(entry.git_status, fg, theme))
+            .bg(bg);
         let line = Line::from(Span::styled(
             format!("{display:<width$}", width = max_width),
             style,
         ));
-        line.render(
-            Rect::new(inner.x, y, inner.width, 1),
-            f.buffer_mut(),
-        );
+        line.render(Rect::new(inner.x, y, inner.width, 1), f.buffer_mut());
+    }
+}
+
+fn git_color(
+    status: Option<char>,
+    default_fg: ratatui::style::Color,
+    theme: &Theme,
+) -> ratatui::style::Color {
+    match status {
+        Some('M') => theme.command_bar_info_accent,
+        Some('A') | Some('?') => theme.diff_add_fg,
+        Some('D') => theme.diff_del_fg,
+        _ => default_fg,
+    }
+}
+
+fn file_icon(name: &str) -> &'static str {
+    match name.rsplit('.').next() {
+        Some("rs") => "r",
+        Some("md") => "•",
+        Some("toml") | Some("json") | Some("yaml") | Some("yml") => "{}",
+        Some("js") | Some("ts") | Some("tsx") | Some("jsx") => "◉",
+        Some("html") | Some("css") => "◌",
+        Some("sh") | Some("bash") | Some("zsh") => "›",
+        _ => "·",
     }
 }

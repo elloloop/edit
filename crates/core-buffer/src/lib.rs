@@ -8,8 +8,12 @@ pub enum Direction {
     Down,
     Left,
     Right,
+    WordLeft,
+    WordRight,
     Home,
     End,
+    FileStart,
+    FileEnd,
     PageUp,
     PageDown,
 }
@@ -26,28 +30,40 @@ pub struct Buffer {
     pub rope: Rope,
     pub path: Option<PathBuf>,
     pub dirty: bool,
+    pub is_binary: bool,
     pub language: String,
     pub cursor_line: usize,
     pub cursor_col: usize,
     pub scroll_top: usize,
     pub scroll_left: usize,
     pub selection: Option<Selection>,
+    history: Vec<Rope>,
+    undo_pos: usize,
 }
 
 impl Buffer {
     pub fn from_file(path: &Path) -> anyhow::Result<Self> {
-        let content = fs::read_to_string(path)?;
+        let bytes = fs::read(path)?;
+        let is_binary = bytes.contains(&0);
+        let content = if is_binary {
+            String::from_utf8_lossy(&bytes).into_owned()
+        } else {
+            String::from_utf8(bytes)?
+        };
         let language = detect_language(path);
         Ok(Self {
             rope: Rope::from_str(&content),
             path: Some(path.to_path_buf()),
             dirty: false,
+            is_binary,
             language,
             cursor_line: 0,
             cursor_col: 0,
             scroll_top: 0,
             scroll_left: 0,
             selection: None,
+            history: vec![Rope::from_str(&content)],
+            undo_pos: 0,
         })
     }
 
@@ -56,12 +72,15 @@ impl Buffer {
             rope: Rope::from_str(content),
             path: None,
             dirty: false,
+            is_binary: false,
             language: String::from("text"),
             cursor_line: 0,
             cursor_col: 0,
             scroll_top: 0,
             scroll_left: 0,
             selection: None,
+            history: vec![Rope::from_str(content)],
+            undo_pos: 0,
         }
     }
 
@@ -81,6 +100,7 @@ impl Buffer {
     }
 
     pub fn insert_char(&mut self, ch: char) {
+        self.prepare_history();
         let idx = self.cursor_byte_offset();
         let char_idx = self.rope.byte_to_char(idx);
         self.rope.insert_char(char_idx, ch);
@@ -91,24 +111,29 @@ impl Buffer {
             self.cursor_col += 1;
         }
         self.dirty = true;
+        self.save_snapshot();
     }
 
     pub fn delete_char(&mut self) {
         let line_len = self.current_line_len();
         if self.cursor_col < line_len {
+            self.prepare_history();
             let idx = self.cursor_byte_offset();
             let char_idx = self.rope.byte_to_char(idx);
             if char_idx < self.rope.len_chars() {
                 self.rope.remove(char_idx..char_idx + 1);
                 self.dirty = true;
+                self.save_snapshot();
             }
         } else if self.cursor_line + 1 < self.line_count() {
             // Join with next line
+            self.prepare_history();
             let idx = self.cursor_byte_offset();
             let char_idx = self.rope.byte_to_char(idx);
             if char_idx < self.rope.len_chars() {
                 self.rope.remove(char_idx..char_idx + 1);
                 self.dirty = true;
+                self.save_snapshot();
             }
         }
     }
@@ -130,6 +155,31 @@ impl Buffer {
     }
 
     pub fn move_cursor(&mut self, direction: Direction, count: usize) {
+        match direction {
+            Direction::PageUp => {
+                self.cursor_line = self.cursor_line.saturating_sub(count);
+                self.clamp_cursor_col();
+                return;
+            }
+            Direction::PageDown => {
+                self.cursor_line =
+                    (self.cursor_line + count).min(self.line_count().saturating_sub(1));
+                self.clamp_cursor_col();
+                return;
+            }
+            Direction::FileStart => {
+                self.cursor_line = 0;
+                self.cursor_col = 0;
+                return;
+            }
+            Direction::FileEnd => {
+                self.cursor_line = self.line_count().saturating_sub(1);
+                self.cursor_col = self.current_line_len();
+                return;
+            }
+            _ => {}
+        }
+
         for _ in 0..count {
             match direction {
                 Direction::Up => {
@@ -161,20 +211,18 @@ impl Buffer {
                         self.cursor_col = 0;
                     }
                 }
+                Direction::WordLeft => self.move_word_left(),
+                Direction::WordRight => self.move_word_right(),
                 Direction::Home => {
                     self.cursor_col = 0;
                 }
                 Direction::End => {
                     self.cursor_col = self.current_line_len();
                 }
-                Direction::PageUp => {
-                    self.cursor_line = self.cursor_line.saturating_sub(30);
-                    self.clamp_cursor_col();
-                }
-                Direction::PageDown => {
-                    self.cursor_line = (self.cursor_line + 30).min(self.line_count().saturating_sub(1));
-                    self.clamp_cursor_col();
-                }
+                Direction::FileStart
+                | Direction::FileEnd
+                | Direction::PageUp
+                | Direction::PageDown => {}
             }
         }
     }
@@ -234,6 +282,20 @@ impl Buffer {
         if height == 0 {
             return;
         }
+        let margin = 3usize.min(height.saturating_sub(1));
+        let top_guard = self.scroll_top.saturating_add(margin);
+        let bottom_guard = self
+            .scroll_top
+            .saturating_add(height.saturating_sub(margin + 1));
+
+        if self.cursor_line < top_guard {
+            self.scroll_top = self.cursor_line.saturating_sub(margin);
+        } else if self.cursor_line > bottom_guard {
+            self.scroll_top = self
+                .cursor_line
+                .saturating_add(margin + 1)
+                .saturating_sub(height);
+        }
         if self.cursor_line < self.scroll_top {
             self.scroll_top = self.cursor_line;
         }
@@ -284,6 +346,111 @@ impl Buffer {
         self.cursor_col = old_col;
         self.clamp_cursor_col();
         self.dirty = false;
+        self.history.clear();
+        self.history.push(self.rope.clone());
+        self.undo_pos = 0;
+    }
+
+    pub fn undo(&mut self) -> bool {
+        if self.undo_pos == 0 {
+            return false;
+        }
+        self.undo_pos -= 1;
+        self.rope = self.history[self.undo_pos].clone();
+        self.fix_cursor_after_history_change();
+        self.dirty = self.undo_pos != 0;
+        true
+    }
+
+    pub fn redo(&mut self) -> bool {
+        if self.undo_pos + 1 >= self.history.len() {
+            return false;
+        }
+        self.undo_pos += 1;
+        self.rope = self.history[self.undo_pos].clone();
+        self.fix_cursor_after_history_change();
+        self.dirty = self.undo_pos != 0;
+        true
+    }
+
+    fn move_word_left(&mut self) {
+        if self.cursor_line == 0 && self.cursor_col == 0 {
+            return;
+        }
+
+        let chars: Vec<char> = self.current_line_chars();
+        if self.cursor_col == 0 {
+            self.cursor_line -= 1;
+            self.cursor_col = self.line_len(self.cursor_line);
+            self.move_word_left();
+            return;
+        }
+
+        let mut idx = self.cursor_col.min(chars.len());
+        while idx > 0 && chars[idx - 1].is_whitespace() {
+            idx -= 1;
+        }
+        while idx > 0 && is_word_char(chars[idx - 1]) {
+            idx -= 1;
+        }
+        if idx == self.cursor_col && idx > 0 {
+            idx -= 1;
+        }
+        self.cursor_col = idx;
+    }
+
+    fn move_word_right(&mut self) {
+        let chars: Vec<char> = self.current_line_chars();
+        if self.cursor_col >= chars.len() {
+            if self.cursor_line + 1 < self.line_count() {
+                self.cursor_line += 1;
+                self.cursor_col = 0;
+                self.move_word_right();
+            }
+            return;
+        }
+
+        let mut idx = self.cursor_col;
+        while idx < chars.len() && chars[idx].is_whitespace() {
+            idx += 1;
+        }
+        while idx < chars.len() && is_word_char(chars[idx]) {
+            idx += 1;
+        }
+        if idx == self.cursor_col && idx < chars.len() {
+            idx += 1;
+        }
+        self.cursor_col = idx;
+    }
+
+    fn current_line_chars(&self) -> Vec<char> {
+        self.get_line(self.cursor_line)
+            .unwrap_or_default()
+            .chars()
+            .collect()
+    }
+
+    fn prepare_history(&mut self) {
+        if self.undo_pos + 1 < self.history.len() {
+            self.history.truncate(self.undo_pos + 1);
+        }
+        if self.history.is_empty() {
+            self.history.push(self.rope.clone());
+            self.undo_pos = 0;
+        }
+    }
+
+    fn save_snapshot(&mut self) {
+        self.history.push(self.rope.clone());
+        while self.history.len() > 100 {
+            self.history.remove(0);
+        }
+        self.undo_pos = self.history.len().saturating_sub(1);
+    }
+
+    fn fix_cursor_after_history_change(&mut self) {
+        self.cursor_line = self.cursor_line.min(self.line_count().saturating_sub(1));
+        self.clamp_cursor_col();
     }
 }
 
@@ -302,5 +469,65 @@ fn detect_language(path: &Path) -> String {
         Some("css") => "css".to_string(),
         Some("html") | Some("htm") => "html".to_string(),
         _ => "text".to_string(),
+    }
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Buffer, Direction};
+
+    #[test]
+    fn word_movement_respects_identifiers() {
+        let mut buffer = Buffer::from_string("alpha beta_gamma");
+        buffer.cursor_col = buffer.get_line(0).unwrap().chars().count();
+        buffer.move_cursor(Direction::WordLeft, 1);
+        assert_eq!(buffer.cursor_col, 6);
+        buffer.move_cursor(Direction::WordLeft, 1);
+        assert_eq!(buffer.cursor_col, 0);
+        buffer.move_cursor(Direction::WordRight, 1);
+        assert_eq!(buffer.cursor_col, 5);
+        buffer.move_cursor(Direction::WordRight, 1);
+        assert_eq!(buffer.cursor_col, 16);
+    }
+
+    #[test]
+    fn undo_and_redo_restore_text() {
+        let mut buffer = Buffer::from_string("abc");
+        buffer.cursor_col = 3;
+        buffer.insert_char('d');
+        buffer.new_line();
+        buffer.insert_char('x');
+        assert_eq!(buffer.content(), "abcd\nx");
+
+        assert!(buffer.undo());
+        assert_eq!(buffer.content(), "abcd\n");
+        assert!(buffer.undo());
+        assert_eq!(buffer.content(), "abcd");
+        assert!(buffer.undo());
+        assert_eq!(buffer.content(), "abc");
+
+        assert!(buffer.redo());
+        assert_eq!(buffer.content(), "abcd");
+        assert!(buffer.redo());
+        assert_eq!(buffer.content(), "abcd\n");
+        assert!(buffer.redo());
+        assert_eq!(buffer.content(), "abcd\nx");
+    }
+
+    #[test]
+    fn page_movement_uses_requested_size() {
+        let text = (0..200)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut buffer = Buffer::from_string(&text);
+        buffer.move_cursor(Direction::PageDown, 17);
+        assert_eq!(buffer.cursor_line, 17);
+        buffer.move_cursor(Direction::PageUp, 9);
+        assert_eq!(buffer.cursor_line, 8);
     }
 }

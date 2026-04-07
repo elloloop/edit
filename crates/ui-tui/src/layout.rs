@@ -1,12 +1,13 @@
 use core_buffer::Buffer;
+use core_diff::ChangedFile;
 use core_diff::FileDiff;
 use core_fs::FileTree;
-use core_picker::{Picker, PickerPath};
+use core_picker::{Picker, PickerPath, SearchMatch};
 use core_syntax::Highlighter;
 use core_theme::Theme;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::Frame;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::command_bar::{self, CommandBarState};
@@ -22,6 +23,7 @@ pub fn render_app(
     f: &mut Frame,
     buffers: &[Buffer],
     active_buffer: usize,
+    split_buffers: Option<(usize, usize)>,
     file_tree: &FileTree,
     sidebar_visible: bool,
     theme: &Theme,
@@ -30,34 +32,45 @@ pub fn render_app(
     diffs: &HashMap<PathBuf, FileDiff>,
     help_visible: bool,
     file_picker: Option<&Picker<PickerPath>>,
+    changed_picker: Option<&Picker<ChangedFile>>,
+    grep_picker: Option<&Picker<SearchMatch>>,
     command_input: &str,
     status_message: Option<&str>,
+    breadcrumb: &str,
+    last_search: &str,
+    matching_bracket: Option<(usize, usize)>,
+    wrap_lines: bool,
+    editing: bool,
 ) {
     let area = f.area();
 
-    // Main vertical layout: tabs | body | info line | command input
+    // Main vertical layout: tabs | breadcrumb | body | info line | command input
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // tab bar
-            Constraint::Min(1),   // body
+            Constraint::Length(1), // breadcrumb
+            Constraint::Min(1),    // body
             Constraint::Length(2), // command bar (info + input)
         ])
         .split(area);
 
     let tab_area = main_layout[0];
-    let body_area = main_layout[1];
-    let command_area = main_layout[2];
+    let breadcrumb_area = main_layout[1];
+    let body_area = main_layout[2];
+    let command_area = main_layout[3];
 
     // Render tabs
+    let conflict_names = conflict_file_names(buffers);
     let tab_infos: Vec<TabInfo> = buffers
         .iter()
         .map(|b| TabInfo {
-            name: b.file_name(),
+            name: display_tab_name(b, &conflict_names),
             dirty: b.dirty,
         })
         .collect();
     tabs::render_tabs(f, tab_area, &tab_infos, active_buffer, theme);
+    render_breadcrumb(f, breadcrumb_area, breadcrumb, theme);
 
     // Body: sidebar (optional) | editor/diff
     if sidebar_visible {
@@ -65,7 +78,7 @@ pub fn render_app(
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Length(30), // sidebar
-                Constraint::Min(1),    // editor
+                Constraint::Min(1),     // editor
             ])
             .split(body_area);
 
@@ -75,10 +88,14 @@ pub fn render_app(
             body_layout[1],
             buffers,
             active_buffer,
+            split_buffers,
             theme,
             highlighters,
             diff_mode,
             diffs,
+            last_search,
+            matching_bracket,
+            wrap_lines,
         );
     } else {
         render_editor_or_diff(
@@ -86,10 +103,14 @@ pub fn render_app(
             body_area,
             buffers,
             active_buffer,
+            split_buffers,
             theme,
             highlighters,
             diff_mode,
             diffs,
+            last_search,
+            matching_bracket,
+            wrap_lines,
         );
     }
 
@@ -105,6 +126,8 @@ pub fn render_app(
         total_lines: buf.line_count(),
         dirty: buf.dirty,
         diff_mode,
+        editing,
+        split_mode: split_buffers.is_some(),
     };
     command_bar::render_command_bar(f, command_area, &cb_state, theme);
 
@@ -118,6 +141,14 @@ pub fn render_app(
         let overlay = centered_rect(60, 50, area);
         picker_ui::render_picker(f, overlay, picker, "Open File", theme);
     }
+    if let Some(picker) = changed_picker {
+        let overlay = centered_rect(70, 60, area);
+        picker_ui::render_picker(f, overlay, picker, "Changed Files", theme);
+    }
+    if let Some(picker) = grep_picker {
+        let overlay = centered_rect(75, 65, area);
+        picker_ui::render_picker(f, overlay, picker, "Search Results", theme);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -126,11 +157,49 @@ fn render_editor_or_diff(
     area: Rect,
     buffers: &[Buffer],
     active_buffer: usize,
+    split_buffers: Option<(usize, usize)>,
     theme: &Theme,
     highlighters: &HashMap<usize, Highlighter>,
     diff_mode: bool,
     diffs: &HashMap<PathBuf, FileDiff>,
+    last_search: &str,
+    matching_bracket: Option<(usize, usize)>,
+    wrap_lines: bool,
 ) {
+    if let Some((left_idx, right_idx)) = split_buffers {
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        render_single_editor(
+            f,
+            layout[0],
+            &buffers[left_idx],
+            left_idx,
+            active_buffer == left_idx,
+            theme,
+            highlighters,
+            diffs,
+            last_search,
+            matching_bracket,
+            wrap_lines,
+        );
+        render_single_editor(
+            f,
+            layout[1],
+            &buffers[right_idx],
+            right_idx,
+            active_buffer == right_idx,
+            theme,
+            highlighters,
+            diffs,
+            last_search,
+            matching_bracket,
+            wrap_lines,
+        );
+        return;
+    }
+
     let buf = &buffers[active_buffer];
 
     if diff_mode {
@@ -148,6 +217,10 @@ fn render_editor_or_diff(
                     buf,
                     highlighters.get(&active_buffer),
                     theme,
+                    diffs.get(path),
+                    last_search,
+                    matching_bracket,
+                    wrap_lines,
                 );
                 diff_view::render_diff(f, layout[1], diff, theme);
                 return;
@@ -155,7 +228,63 @@ fn render_editor_or_diff(
         }
     }
 
-    editor::render_editor(f, area, buf, highlighters.get(&active_buffer), theme);
+    editor::render_editor(
+        f,
+        area,
+        buf,
+        highlighters.get(&active_buffer),
+        theme,
+        buf.path.as_ref().and_then(|path| diffs.get(path)),
+        last_search,
+        matching_bracket,
+        wrap_lines,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_single_editor(
+    f: &mut Frame,
+    area: Rect,
+    buf: &Buffer,
+    buffer_index: usize,
+    active: bool,
+    theme: &Theme,
+    highlighters: &HashMap<usize, Highlighter>,
+    diffs: &HashMap<PathBuf, FileDiff>,
+    last_search: &str,
+    matching_bracket: Option<(usize, usize)>,
+    wrap_lines: bool,
+) {
+    if active {
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(ratatui::style::Style::default().fg(theme.command_bar_info_accent));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        editor::render_editor(
+            f,
+            inner,
+            buf,
+            highlighters.get(&buffer_index),
+            theme,
+            buf.path.as_ref().and_then(|path| diffs.get(path)),
+            last_search,
+            matching_bracket,
+            wrap_lines,
+        );
+    } else {
+        editor::render_editor(
+            f,
+            area,
+            buf,
+            highlighters.get(&buffer_index),
+            theme,
+            buf.path.as_ref().and_then(|path| diffs.get(path)),
+            last_search,
+            matching_bracket,
+            wrap_lines,
+        );
+    }
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
@@ -176,4 +305,43 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn render_breadcrumb(f: &mut Frame, area: Rect, breadcrumb: &str, theme: &Theme) {
+    let style = ratatui::style::Style::default()
+        .fg(theme.command_bar_info_accent)
+        .bg(theme.editor_bg);
+    let bg = ratatui::widgets::Block::default().style(style);
+    f.render_widget(bg, area);
+    let text = format!("  {breadcrumb}");
+    f.render_widget(ratatui::text::Line::from(text), area);
+}
+
+fn conflict_file_names(buffers: &[Buffer]) -> HashSet<String> {
+    let mut counts = HashMap::new();
+    for buffer in buffers {
+        *counts.entry(buffer.file_name()).or_insert(0usize) += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(name, _)| name)
+        .collect()
+}
+
+fn display_tab_name(buffer: &Buffer, conflict_names: &HashSet<String>) -> String {
+    let file_name = buffer.file_name();
+    if !conflict_names.contains(&file_name) {
+        return file_name;
+    }
+
+    if let Some(path) = buffer.path.as_ref() {
+        if let Some(parent) = path.parent() {
+            if let Some(parent_name) = parent.file_name() {
+                return format!("{}/{}", parent_name.to_string_lossy(), file_name);
+            }
+        }
+    }
+
+    file_name
 }
