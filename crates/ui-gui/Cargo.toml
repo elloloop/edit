@@ -16,3 +16,5 @@ core-picker = { path = "../core-picker" }
 core-fs = { path = "../core-fs" }
 eframe = "0.31"
 anyhow.workspace = true
+fnug-vt100 = "0.15.2"
+portable-pty = "0.9.0"

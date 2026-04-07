@@ -1,124 +1,283 @@
+use anyhow::{Context, Result};
 use core_buffer::Buffer;
 use core_fs::FileTree;
 use core_syntax::Highlighter;
 use eframe::egui;
+use fnug_vt100 as vt100;
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
+use std::time::Duration;
+
+const TERMINAL_SCROLLBACK: usize = 10_000;
+const TERMINAL_MIN_COLS: u16 = 40;
+const TERMINAL_MIN_ROWS: u16 = 10;
+const TERMINAL_FONT_SIZE: f32 = 13.0;
+const TERMINAL_GUTTER: f32 = 10.0;
+const TERMINAL_RATIO_MIN: f32 = 0.22;
+const TERMINAL_RATIO_MAX: f32 = 0.78;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TerminalSize {
+    rows: u16,
+    cols: u16,
+}
+
+impl Default for TerminalSize {
+    fn default() -> Self {
+        Self {
+            rows: 24,
+            cols: 100,
+        }
+    }
+}
+
+impl TerminalSize {
+    fn pty_size(self) -> PtySize {
+        PtySize {
+            rows: self.rows,
+            cols: self.cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }
+    }
+}
+
+enum TerminalEvent {
+    Output(Vec<u8>),
+}
 
 struct TerminalPane {
     title: String,
-    output: String,
-    input: String,
-    process: Option<Child>,
-    stdin: Option<ChildStdin>,
-    rx: Option<mpsc::Receiver<String>>,
+    parser: vt100::Parser,
+    rx: Option<mpsc::Receiver<TerminalEvent>>,
+    writer: Option<Box<dyn Write + Send>>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
+    scrollback: usize,
+    size: TerminalSize,
+    running: bool,
+    launch_kind: AgentKind,
+    status: String,
 }
 
 impl TerminalPane {
-    fn shell(cwd: &Path) -> Self {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-        let label = Path::new(&shell)
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or(shell.clone());
-        let mut pane = Self::empty(&label);
-        pane.spawn(&shell, &[], cwd);
+    fn new(kind: AgentKind, cwd: &Path) -> Self {
+        let mut pane = Self {
+            title: kind.label().to_string(),
+            parser: vt100::Parser::new(
+                TerminalSize::default().rows,
+                TerminalSize::default().cols,
+                TERMINAL_SCROLLBACK,
+            ),
+            rx: None,
+            writer: None,
+            master: None,
+            child: None,
+            scrollback: 0,
+            size: TerminalSize::default(),
+            running: false,
+            launch_kind: kind,
+            status: String::new(),
+        };
+        pane.spawn(kind, cwd);
         pane
     }
 
-    fn empty(label: &str) -> Self {
-        Self {
-            title: label.to_string(),
-            output: String::new(),
-            input: String::new(),
-            process: None,
-            stdin: None,
-            rx: None,
+    fn spawn(&mut self, kind: AgentKind, cwd: &Path) {
+        self.shutdown();
+        self.launch_kind = kind;
+        self.title = kind.label().to_string();
+        self.scrollback = 0;
+        self.parser = vt100::Parser::new(self.size.rows, self.size.cols, TERMINAL_SCROLLBACK);
+
+        match spawn_terminal(kind, cwd, self.size) {
+            Ok(session) => {
+                self.rx = Some(session.rx);
+                self.writer = Some(session.writer);
+                self.master = Some(session.master);
+                self.child = Some(session.child);
+                self.running = true;
+                self.status = format!("Running {} in {}", kind.label(), cwd.display());
+            }
+            Err(err) => {
+                self.rx = None;
+                self.writer = None;
+                self.master = None;
+                self.child = None;
+                self.running = false;
+                self.status = format!("Failed to launch {}: {err:#}", kind.label());
+                self.parser.process(self.status.as_bytes());
+            }
         }
     }
 
-    fn spawn(&mut self, cmd: &str, args: &[&str], cwd: &Path) {
-        self.output.clear();
-        self.input.clear();
-
-        let (tx, rx) = mpsc::channel();
-        self.rx = Some(rx);
-
-        let mut child = match Command::new(cmd)
-            .args(args)
-            .current_dir(cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(err) => {
-                let _ = tx.send(format!("Failed to start {cmd}: {err}\n"));
-                return;
-            }
-        };
-
-        self.stdin = child.stdin.take();
-        self.process = Some(child);
-
-        if let Some(stdout) = self.process.as_mut().and_then(|child| child.stdout.take()) {
-            let tx = tx.clone();
-            std::thread::spawn(move || read_stream(stdout, tx));
+    fn shutdown(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
         }
-        if let Some(stderr) = self.process.as_mut().and_then(|child| child.stderr.take()) {
-            let tx = tx.clone();
-            std::thread::spawn(move || read_stream(stderr, tx));
-        }
+        self.child = None;
+        self.writer = None;
+        self.master = None;
+        self.rx = None;
+        self.running = false;
     }
 
     fn poll(&mut self) {
         if let Some(ref rx) = self.rx {
-            while let Ok(text) = rx.try_recv() {
-                self.output.push_str(&text);
-                if self.output.len() > 80_000 {
-                    let trim = self.output.len() - 60_000;
-                    self.output = self.output[trim..].to_string();
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    TerminalEvent::Output(bytes) => {
+                        self.parser.process(&bytes);
+                        if self.scrollback == 0 {
+                            self.parser.set_scrollback(0);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(child) = self.child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    self.running = false;
+                    self.status = format!("{} exited: {status}", self.title);
+                    self.parser
+                        .process(format!("\r\n[{}]\r\n", self.status).as_bytes());
+                    self.child = None;
+                    self.writer = None;
+                    self.master = None;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    self.running = false;
+                    self.status = format!("{} wait failed: {err}", self.title);
+                    self.parser
+                        .process(format!("\r\n[{}]\r\n", self.status).as_bytes());
+                    self.child = None;
+                    self.writer = None;
+                    self.master = None;
                 }
             }
         }
     }
 
-    fn send_input(&mut self) {
-        let line = self.input.trim_end().to_string();
-        if line.is_empty() {
+    fn resize(&mut self, size: TerminalSize) {
+        if size == self.size {
             return;
         }
-        if let Some(stdin) = self.stdin.as_mut() {
-            let _ = stdin.write_all(line.as_bytes());
-            let _ = stdin.write_all(b"\n");
-            let _ = stdin.flush();
-            self.output.push_str(&format!("$ {line}\n"));
+        self.size = size;
+        self.parser.set_size(size.rows, size.cols);
+        self.parser.set_scrollback(self.scrollback);
+        if let Some(master) = self.master.as_ref() {
+            let _ = master.resize(size.pty_size());
         }
-        self.input.clear();
     }
-}
 
-fn read_stream<R: Read + Send + 'static>(mut stream: R, tx: mpsc::Sender<String>) {
-    let mut buf = [0u8; 4096];
-    loop {
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                if tx.send(text).is_err() {
-                    break;
-                }
+    fn send_bytes(&mut self, bytes: &[u8]) {
+        if let Some(writer) = self.writer.as_mut() {
+            let _ = writer.write_all(bytes);
+            let _ = writer.flush();
+        }
+    }
+
+    fn handle_events(&mut self, events: &[egui::Event]) -> bool {
+        let mut sent = false;
+        for event in events {
+            if let Some(bytes) =
+                translate_terminal_event(event, self.parser.screen().application_cursor())
+            {
+                self.send_bytes(&bytes);
+                sent = true;
             }
-            Err(_) => break,
         }
+        sent
+    }
+
+    fn scroll(&mut self, delta_rows: isize) {
+        let len = self.parser.scrollback_len() as isize;
+        let next = (self.scrollback as isize + delta_rows).clamp(0, len);
+        self.scrollback = next as usize;
+        self.parser.set_scrollback(self.scrollback);
+    }
+
+    fn scroll_to_bottom(&mut self) {
+        self.scrollback = 0;
+        self.parser.set_scrollback(0);
+    }
+
+    fn screen_text(&mut self) -> String {
+        self.parser.set_scrollback(self.scrollback);
+        let mut text = self.parser.screen().contents();
+        if text.is_empty() {
+            text.push('\n');
+        }
+        text
     }
 }
 
-#[derive(Clone, Copy)]
+impl Drop for TerminalPane {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+struct SpawnedTerminal {
+    rx: mpsc::Receiver<TerminalEvent>,
+    writer: Box<dyn Write + Send>,
+    master: Box<dyn MasterPty + Send>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+}
+
+fn spawn_terminal(kind: AgentKind, cwd: &Path, size: TerminalSize) -> Result<SpawnedTerminal> {
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(size.pty_size())
+        .context("create pty pair")?;
+
+    let (program, args) = kind.command();
+    let mut command = CommandBuilder::new(&program);
+    command.args(args.iter().copied());
+    command.cwd(cwd);
+    command.env("TERM", "xterm-256color");
+
+    let child = pair
+        .slave
+        .spawn_command(command)
+        .with_context(|| format!("spawn {program}"))?;
+    let writer = pair.master.take_writer().context("open terminal writer")?;
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .context("open terminal reader")?;
+    let (tx, rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send(TerminalEvent::Output(buf[..n].to_vec())).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    Ok(SpawnedTerminal {
+        rx,
+        writer,
+        master: pair.master,
+        child,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AgentKind {
     Claude,
     OpenCode,
@@ -127,25 +286,28 @@ enum AgentKind {
 }
 
 impl AgentKind {
-    fn label(&self) -> &'static str {
+    fn all() -> [Self; 4] {
+        [Self::Shell, Self::Claude, Self::Goose, Self::OpenCode]
+    }
+
+    fn label(self) -> &'static str {
         match self {
-            Self::Claude => "Claude Code",
-            Self::OpenCode => "opencode",
+            Self::Claude => "Claude",
+            Self::OpenCode => "OpenCode",
             Self::Goose => "Goose",
             Self::Shell => "Shell",
         }
     }
 
-    fn command(&self) -> (&'static str, Vec<&'static str>) {
+    fn command(self) -> (String, Vec<&'static str>) {
         match self {
-            Self::Claude => ("claude", vec![]),
-            Self::OpenCode => ("opencode", vec![]),
-            Self::Goose => ("goose", vec![]),
-            Self::Shell => {
-                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-                let shell: &'static str = Box::leak(shell.into_boxed_str());
-                (shell, vec![])
-            }
+            Self::Claude => ("claude".to_string(), vec![]),
+            Self::OpenCode => ("opencode".to_string(), vec![]),
+            Self::Goose => ("goose".to_string(), vec![]),
+            Self::Shell => (
+                std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()),
+                vec![],
+            ),
         }
     }
 }
@@ -154,6 +316,21 @@ impl AgentKind {
 enum TerminalSplit {
     Vertical,
     Horizontal,
+}
+
+impl TerminalSplit {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Vertical => "Vertical",
+            Self::Horizontal => "Horizontal",
+        }
+    }
+}
+
+enum EditorAction {
+    OpenFile(PathBuf),
+    ToggleDirectory(PathBuf),
+    SelectBuffer(usize),
 }
 
 struct EditApp {
@@ -253,9 +430,9 @@ impl EditApp {
             wrap_lines: false,
             editing: false,
             terminal_split: TerminalSplit::Vertical,
-            terminal_panes: vec![TerminalPane::shell(&root_dir)],
+            terminal_panes: vec![TerminalPane::new(AgentKind::Shell, &root_dir)],
             active_terminal: 0,
-            terminal_ratio: 0.47,
+            terminal_ratio: 0.45,
             file_rx: Some(rx),
             file_watcher: watcher,
         }
@@ -303,6 +480,7 @@ impl EditApp {
             }
             Some(idx)
         } else {
+            self.status_message = Some(format!("Failed to open {}", path.display()));
             None
         }
     }
@@ -358,30 +536,34 @@ impl EditApp {
         }
     }
 
-    fn launch_in_active_terminal(&mut self, kind: AgentKind) {
-        let (cmd, args) = kind.command();
-        let cwd = self.root_dir.clone();
+    fn relaunch_active_terminal(&mut self, kind: AgentKind) {
+        let root = self.root_dir.clone();
         if let Some(pane) = self.active_terminal_mut() {
-            pane.title = kind.label().to_string();
-            pane.spawn(cmd, &args, &cwd);
+            pane.spawn(kind, &root);
+            self.status_message = Some(format!("Launched {} in active terminal", kind.label()));
         }
     }
 
     fn split_terminal(&mut self, split: TerminalSplit) {
         self.terminal_split = split;
-        self.terminal_panes
-            .push(TerminalPane::shell(&self.root_dir));
-        self.active_terminal = self.terminal_panes.len() - 1;
+        self.terminal_panes.insert(
+            self.active_terminal + 1,
+            TerminalPane::new(AgentKind::Shell, &self.root_dir),
+        );
+        self.active_terminal += 1;
+        self.status_message = Some(format!("Opened {} split", split.label().to_lowercase()));
     }
 
     fn close_active_terminal(&mut self) {
         if self.terminal_panes.len() <= 1 {
+            self.status_message = Some("At least one terminal pane must remain".to_string());
             return;
         }
         self.terminal_panes.remove(self.active_terminal);
         if self.active_terminal >= self.terminal_panes.len() {
             self.active_terminal = self.terminal_panes.len() - 1;
         }
+        self.status_message = Some("Closed terminal split".to_string());
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -416,6 +598,8 @@ impl EditApp {
                 } else if self.editing {
                     self.editing = false;
                     self.status_message = Some("View mode".to_string());
+                } else if let Some(pane) = self.active_terminal_mut() {
+                    pane.scroll_to_bottom();
                 }
             }
         });
@@ -488,26 +672,16 @@ impl eframe::App for EditApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_file_events();
         self.handle_shortcuts(ctx);
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        ctx.request_repaint_after(Duration::from_millis(16));
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("Terminal", |ui| {
-                    if ui.button("New Shell").clicked() {
-                        self.launch_in_active_terminal(AgentKind::Shell);
-                        ui.close_menu();
-                    }
-                    if ui.button("Launch Claude").clicked() {
-                        self.launch_in_active_terminal(AgentKind::Claude);
-                        ui.close_menu();
-                    }
-                    if ui.button("Launch Goose").clicked() {
-                        self.launch_in_active_terminal(AgentKind::Goose);
-                        ui.close_menu();
-                    }
-                    if ui.button("Launch opencode").clicked() {
-                        self.launch_in_active_terminal(AgentKind::OpenCode);
-                        ui.close_menu();
+                    for kind in AgentKind::all() {
+                        if ui.button(format!("Launch {}", kind.label())).clicked() {
+                            self.relaunch_active_terminal(kind);
+                            ui.close_menu();
+                        }
                     }
                     ui.separator();
                     if ui.button("Split Vertical").clicked() {
@@ -578,6 +752,16 @@ impl eframe::App for EditApp {
                     },
                     if self.editing { "  EDIT" } else { "" }
                 ));
+                if let Some(pane) = self.terminal_panes.get(self.active_terminal) {
+                    ui.separator();
+                    ui.label(format!(
+                        "{}  {}x{}{}",
+                        pane.title,
+                        pane.size.cols,
+                        pane.size.rows,
+                        if pane.running { "" } else { "  stopped" }
+                    ));
+                }
                 if let Some(ref msg) = self.status_message {
                     ui.separator();
                     ui.label(msg);
@@ -587,34 +771,72 @@ impl eframe::App for EditApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let total_width = ui.available_width();
+            let height = ui.available_height();
+            let divider_width = 8.0;
             let left_width = (total_width * self.terminal_ratio).max(320.0);
-            let right_width = (total_width - left_width - 8.0).max(420.0);
+            let right_width = (total_width - left_width - divider_width).max(420.0);
             let breadcrumb = self.breadcrumb();
+            let terminal_input_events = ctx.input(|input| input.events.clone());
 
             ui.horizontal(|ui| {
-                ui.allocate_ui(egui::vec2(left_width, ui.available_height()), |ui| {
+                ui.allocate_ui(egui::vec2(left_width, height), |ui| {
                     render_terminal_workspace(
                         ui,
                         &mut self.terminal_panes,
                         &mut self.active_terminal,
                         self.terminal_split,
+                        &terminal_input_events,
+                        &self.root_dir,
                     );
                 });
 
-                ui.separator();
+                let (divider_rect, divider_response) =
+                    ui.allocate_exact_size(egui::vec2(divider_width, height), egui::Sense::drag());
+                ui.painter().rect_filled(
+                    divider_rect.shrink2(egui::vec2(2.5, 0.0)),
+                    2.0,
+                    if divider_response.dragged() {
+                        egui::Color32::from_rgb(75, 124, 233)
+                    } else {
+                        ui.visuals().widgets.noninteractive.bg_stroke.color
+                    },
+                );
+                if divider_response.dragged() {
+                    let delta = ctx.input(|input| input.pointer.delta().x);
+                    self.terminal_ratio = (self.terminal_ratio + delta / total_width)
+                        .clamp(TERMINAL_RATIO_MIN, TERMINAL_RATIO_MAX);
+                }
 
-                ui.allocate_ui(egui::vec2(right_width, ui.available_height()), |ui| {
-                    render_editor_workspace(
+                ui.allocate_ui(egui::vec2(right_width, height), |ui| {
+                    if let Some(action) = render_editor_workspace(
                         ui,
                         &mut self.buffers,
-                        &mut self.active_buffer,
+                        self.active_buffer,
                         self.compare_buffer,
                         self.sidebar_visible,
-                        self.file_tree.as_mut(),
+                        self.file_tree.as_ref(),
                         self.wrap_lines,
                         self.editing,
                         &breadcrumb,
-                    );
+                    ) {
+                        match action {
+                            EditorAction::OpenFile(path) => self.open_file(&path),
+                            EditorAction::ToggleDirectory(path) => {
+                                if let Some(tree) = self.file_tree.as_mut() {
+                                    if let Some(idx) =
+                                        tree.entries.iter().position(|entry| entry.path == path)
+                                    {
+                                        tree.toggle_expand(idx);
+                                    }
+                                }
+                            }
+                            EditorAction::SelectBuffer(index) => {
+                                if index < self.buffers.len() {
+                                    self.active_buffer = index;
+                                }
+                            }
+                        }
+                    }
                 });
             });
         });
@@ -626,14 +848,15 @@ fn render_terminal_workspace(
     panes: &mut [TerminalPane],
     active_terminal: &mut usize,
     split: TerminalSplit,
+    input_events: &[egui::Event],
+    root_dir: &Path,
 ) {
     ui.horizontal(|ui| {
-        ui.strong("Terminal");
+        ui.strong("Terminal Workspace");
         ui.separator();
-        ui.label(match split {
-            TerminalSplit::Vertical => "vertical split",
-            TerminalSplit::Horizontal => "horizontal split",
-        });
+        ui.label(format!("{} split", split.label().to_lowercase()));
+        ui.separator();
+        ui.label(root_dir.display().to_string());
     });
     ui.separator();
 
@@ -642,7 +865,7 @@ fn render_terminal_workspace(
             ui.columns(panes.len().max(1), |columns| {
                 for (idx, pane) in panes.iter_mut().enumerate() {
                     if let Some(column) = columns.get_mut(idx) {
-                        render_terminal_pane(column, pane, idx, active_terminal);
+                        render_terminal_pane(column, pane, idx, active_terminal, input_events);
                     }
                 }
             });
@@ -650,9 +873,11 @@ fn render_terminal_workspace(
         TerminalSplit::Horizontal => {
             let pane_count = panes.len();
             for (idx, pane) in panes.iter_mut().enumerate() {
-                render_terminal_pane(ui, pane, idx, active_terminal);
+                render_terminal_pane(ui, pane, idx, active_terminal, input_events);
                 if idx + 1 < pane_count {
+                    ui.add_space(6.0);
                     ui.separator();
+                    ui.add_space(6.0);
                 }
             }
         }
@@ -664,58 +889,104 @@ fn render_terminal_pane(
     pane: &mut TerminalPane,
     idx: usize,
     active_terminal: &mut usize,
+    input_events: &[egui::Event],
 ) {
+    let pane_id = ui.make_persistent_id(("terminal-pane", idx));
     let selected = *active_terminal == idx;
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(selected, egui::RichText::new(&pane.title).strong())
-                .clicked()
-            {
+    let frame = egui::Frame::group(ui.style()).fill(if selected {
+        egui::Color32::from_rgb(16, 20, 27)
+    } else {
+        egui::Color32::from_rgb(12, 15, 21)
+    });
+
+    let response = frame
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(selected, egui::RichText::new(&pane.title).strong())
+                    .clicked()
+                {
+                    *active_terminal = idx;
+                    ui.memory_mut(|memory| memory.request_focus(pane_id));
+                }
+                ui.separator();
+                ui.small(if pane.running { "live" } else { "stopped" });
+                if pane.scrollback > 0 {
+                    ui.separator();
+                    ui.small(format!("scrollback {}", pane.scrollback));
+                }
+            });
+            ui.small(&pane.status);
+            ui.separator();
+
+            let available = ui.available_size_before_wrap();
+            let screen_height = (available.y - 4.0).max(180.0);
+            let terminal_size = estimate_terminal_size(ui, available.x, screen_height);
+            pane.resize(terminal_size);
+
+            let (rect, _response) = ui
+                .allocate_exact_size(egui::vec2(available.x, screen_height), egui::Sense::click());
+            let response = ui.interact(rect, pane_id, egui::Sense::click());
+            if response.clicked() {
                 *active_terminal = idx;
+                ui.memory_mut(|memory| memory.request_focus(pane_id));
             }
-        });
-        ui.separator();
-        egui::ScrollArea::vertical()
-            .stick_to_bottom(true)
-            .max_height(420.0)
-            .show(ui, |ui| {
-                ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
+
+            if response.hovered() {
+                let scroll = ui.input(|input| input.raw_scroll_delta.y);
+                if scroll.abs() > 0.0 {
+                    let delta_rows = if scroll > 0.0 { 3 } else { -3 };
+                    pane.scroll(delta_rows);
+                }
+            }
+
+            if response.has_focus() && pane.handle_events(input_events) {
+                pane.scroll_to_bottom();
+            }
+
+            let text = pane.screen_text();
+            let inner_rect = rect.shrink(TERMINAL_GUTTER);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(inner_rect), |ui| {
+                ui.style_mut().override_font_id = Some(egui::FontId::monospace(TERMINAL_FONT_SIZE));
+                ui.style_mut().visuals.override_text_color =
+                    Some(egui::Color32::from_rgb(220, 226, 236));
+                let mut text = text;
                 ui.add(
-                    egui::TextEdit::multiline(&mut pane.output)
+                    egui::TextEdit::multiline(&mut text)
                         .font(egui::TextStyle::Monospace)
-                        .desired_rows(22)
+                        .desired_rows(usize::from(terminal_size.rows))
                         .desired_width(f32::INFINITY)
                         .interactive(false),
                 );
             });
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut pane.input)
-                .font(egui::TextStyle::Monospace)
-                .desired_width(f32::INFINITY)
-                .hint_text("Run a command in this pane"),
-        );
-        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            pane.send_input();
-        }
-    });
+
+            response
+        })
+        .inner;
+
+    if selected && response.has_focus() {
+        let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(75, 124, 233));
+        ui.painter()
+            .rect_stroke(response.rect, 6.0, stroke, egui::StrokeKind::Outside);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn render_editor_workspace(
     ui: &mut egui::Ui,
     buffers: &mut [Buffer],
-    active_buffer: &mut usize,
+    active_buffer: usize,
     compare_buffer: Option<usize>,
     sidebar_visible: bool,
-    file_tree: Option<&mut FileTree>,
+    file_tree: Option<&FileTree>,
     wrap_lines: bool,
     editing: bool,
     breadcrumb: &str,
-) {
+) -> Option<EditorAction> {
+    let mut action = None;
     ui.horizontal(|ui| {
         let editor_total_width = ui.available_width();
-        let sidebar_width = if sidebar_visible { 220.0 } else { 0.0 };
+        let sidebar_width = if sidebar_visible { 240.0 } else { 0.0 };
         if let Some(tree) = file_tree {
             if sidebar_visible {
                 let entries: Vec<(PathBuf, String, bool, usize, Option<char>, bool)> = tree
@@ -732,10 +1003,12 @@ fn render_editor_workspace(
                         )
                     })
                     .collect();
-                let mut clicked_file = None;
-                let mut toggle_dir = None;
                 ui.allocate_ui(egui::vec2(sidebar_width, ui.available_height()), |ui| {
-                    ui.heading("Files");
+                    ui.horizontal(|ui| {
+                        ui.heading("Files");
+                        ui.separator();
+                        ui.small("Explorer");
+                    });
                     ui.separator();
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         for (path, name, is_dir, depth, git_status, expanded) in &entries {
@@ -756,31 +1029,15 @@ fn render_editor_workspace(
                                 .color(git_color(*git_status))
                                 .monospace();
                             if ui.selectable_label(false, rich).clicked() {
-                                if *is_dir {
-                                    toggle_dir = Some(path.clone());
+                                action = Some(if *is_dir {
+                                    EditorAction::ToggleDirectory(path.clone())
                                 } else {
-                                    clicked_file = Some(path.clone());
-                                }
+                                    EditorAction::OpenFile(path.clone())
+                                });
                             }
                         }
                     });
                 });
-
-                if let Some(path) = toggle_dir {
-                    if let Some(idx) = tree.entries.iter().position(|entry| entry.path == path) {
-                        tree.toggle_expand(idx);
-                    }
-                }
-                if let Some(path) = clicked_file {
-                    if let Some(idx) = buffers
-                        .iter()
-                        .position(|buffer| buffer.path.as_deref() == Some(&path))
-                    {
-                        *active_buffer = idx;
-                    } else if let Ok(buf) = Buffer::from_file(&path) {
-                        buffers[*active_buffer] = buf;
-                    }
-                }
                 ui.separator();
             }
         }
@@ -795,42 +1052,78 @@ fn render_editor_workspace(
                         let title = display_tab_name(buffer, &conflicts);
                         let dirty = if buffer.dirty { " *" } else { "" };
                         if ui
-                            .selectable_label(*active_buffer == idx, format!("{title}{dirty}"))
+                            .selectable_label(active_buffer == idx, format!("{title}{dirty}"))
                             .clicked()
                         {
-                            *active_buffer = idx;
+                            action = Some(EditorAction::SelectBuffer(idx));
                         }
                     }
                 });
                 ui.separator();
-                ui.label(egui::RichText::new(breadcrumb).small().monospace());
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(breadcrumb).small().monospace());
+                    ui.separator();
+                    ui.small(if editing { "edit mode" } else { "view mode" });
+                    if wrap_lines {
+                        ui.separator();
+                        ui.small("wrap");
+                    }
+                });
                 ui.separator();
 
                 if let Some(compare_idx) = compare_buffer {
                     ui.columns(2, |columns| {
-                        render_editor_pane(
-                            &mut columns[0],
-                            &mut buffers[*active_buffer],
-                            editing,
-                            wrap_lines,
-                            true,
-                        );
-                        if compare_idx < buffers.len() {
-                            render_editor_pane(
-                                &mut columns[1],
-                                &mut buffers[compare_idx],
-                                false,
-                                wrap_lines,
-                                false,
-                            );
+                        if active_buffer < buffers.len() && compare_idx < buffers.len() {
+                            if active_buffer < compare_idx {
+                                let (left, right) = buffers.split_at_mut(compare_idx);
+                                render_editor_pane(
+                                    &mut columns[0],
+                                    &mut left[active_buffer],
+                                    editing,
+                                    wrap_lines,
+                                    true,
+                                );
+                                render_editor_pane(
+                                    &mut columns[1],
+                                    &mut right[0],
+                                    false,
+                                    wrap_lines,
+                                    false,
+                                );
+                            } else if compare_idx < active_buffer {
+                                let (left, right) = buffers.split_at_mut(active_buffer);
+                                render_editor_pane(
+                                    &mut columns[0],
+                                    &mut right[0],
+                                    editing,
+                                    wrap_lines,
+                                    true,
+                                );
+                                render_editor_pane(
+                                    &mut columns[1],
+                                    &mut left[compare_idx],
+                                    false,
+                                    wrap_lines,
+                                    false,
+                                );
+                            } else {
+                                render_editor_pane(
+                                    &mut columns[0],
+                                    &mut buffers[active_buffer],
+                                    editing,
+                                    wrap_lines,
+                                    true,
+                                );
+                            }
                         }
                     });
                 } else {
-                    render_editor_pane(ui, &mut buffers[*active_buffer], editing, wrap_lines, true);
+                    render_editor_pane(ui, &mut buffers[active_buffer], editing, wrap_lines, true);
                 }
             },
         );
     });
+    action
 }
 
 fn render_editor_pane(
@@ -864,26 +1157,91 @@ fn render_buffer_contents(ui: &mut egui::Ui, buffer: &mut Buffer, editing: bool,
 
     egui::ScrollArea::both().show(ui, |ui| {
         ui.style_mut().override_font_id = Some(egui::FontId::monospace(13.0));
-        if editing {
-            let response = egui::TextEdit::multiline(&mut text)
+        let response = ui.add(
+            egui::TextEdit::multiline(&mut text)
                 .font(egui::TextStyle::Monospace)
                 .desired_width(width)
                 .desired_rows(30)
-                .show(ui)
-                .response;
-            if response.changed() && text != buffer.content() {
-                buffer.replace_content(&text);
-            }
-        } else {
-            ui.add(
-                egui::TextEdit::multiline(&mut text)
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(width)
-                    .desired_rows(30)
-                    .interactive(false),
-            );
+                .interactive(editing),
+        );
+        if editing && response.changed() && text != buffer.content() {
+            buffer.replace_content(&text);
         }
     });
+}
+
+fn estimate_terminal_size(ui: &egui::Ui, width: f32, height: f32) -> TerminalSize {
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace).max(14.0);
+    let col_width =
+        ui.fonts(|fonts| fonts.glyph_width(&egui::FontId::monospace(TERMINAL_FONT_SIZE), 'W'));
+    let usable_width = (width - (TERMINAL_GUTTER * 2.0)).max(1.0);
+    let usable_height = (height - (TERMINAL_GUTTER * 2.0)).max(1.0);
+    TerminalSize {
+        cols: ((usable_width / col_width).floor() as u16).max(TERMINAL_MIN_COLS),
+        rows: ((usable_height / row_height).floor() as u16).max(TERMINAL_MIN_ROWS),
+    }
+}
+
+fn translate_terminal_event(event: &egui::Event, application_cursor: bool) -> Option<Vec<u8>> {
+    match event {
+        egui::Event::Text(text) if !text.is_empty() => Some(text.as_bytes().to_vec()),
+        egui::Event::Paste(text) if !text.is_empty() => Some(text.as_bytes().to_vec()),
+        egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } => translate_key(*key, *modifiers, application_cursor),
+        _ => None,
+    }
+}
+
+fn translate_key(
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+    application_cursor: bool,
+) -> Option<Vec<u8>> {
+    if modifiers.command {
+        return None;
+    }
+    if modifiers.ctrl {
+        let control = match key {
+            egui::Key::C => Some(vec![3]),
+            egui::Key::D => Some(vec![4]),
+            egui::Key::L => Some(vec![12]),
+            egui::Key::Z => Some(vec![26]),
+            _ => None,
+        };
+        if control.is_some() {
+            return control;
+        }
+    }
+
+    let arrow = |normal: &'static [u8], app: &'static [u8]| -> Vec<u8> {
+        if application_cursor {
+            app.to_vec()
+        } else {
+            normal.to_vec()
+        }
+    };
+
+    match key {
+        egui::Key::Enter => Some(vec![b'\r']),
+        egui::Key::Tab => Some(vec![b'\t']),
+        egui::Key::Backspace => Some(vec![0x7f]),
+        egui::Key::Escape => Some(vec![0x1b]),
+        egui::Key::ArrowUp => Some(arrow(b"\x1b[A", b"\x1bOA")),
+        egui::Key::ArrowDown => Some(arrow(b"\x1b[B", b"\x1bOB")),
+        egui::Key::ArrowRight => Some(arrow(b"\x1b[C", b"\x1bOC")),
+        egui::Key::ArrowLeft => Some(arrow(b"\x1b[D", b"\x1bOD")),
+        egui::Key::Home => Some(vec![0x1b, b'[', b'H']),
+        egui::Key::End => Some(vec![0x1b, b'[', b'F']),
+        egui::Key::Insert => Some(vec![0x1b, b'[', b'2', b'~']),
+        egui::Key::Delete => Some(vec![0x1b, b'[', b'3', b'~']),
+        egui::Key::PageUp => Some(vec![0x1b, b'[', b'5', b'~']),
+        egui::Key::PageDown => Some(vec![0x1b, b'[', b'6', b'~']),
+        _ => None,
+    }
 }
 
 fn git_color(status: Option<char>) -> egui::Color32 {
@@ -958,7 +1316,7 @@ fn main() -> eframe::Result {
     let paths: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1600.0, 960.0])
+            .with_inner_size([1680.0, 980.0])
             .with_title("edit"),
         ..Default::default()
     };
@@ -968,4 +1326,61 @@ fn main() -> eframe::Result {
         options,
         Box::new(|_cc| Ok(Box::new(EditApp::new(paths)))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_size_has_minimums() {
+        let size = TerminalSize::default();
+        assert!(size.cols >= TERMINAL_MIN_COLS);
+        assert!(size.rows >= TERMINAL_MIN_ROWS);
+    }
+
+    #[test]
+    fn conflicting_tab_names_use_parent_folder() {
+        let mut left = Buffer::from_string("left");
+        left.path = Some(PathBuf::from("/tmp/a/main.rs"));
+        let mut right = Buffer::from_string("right");
+        right.path = Some(PathBuf::from("/tmp/b/main.rs"));
+        let buffers = [left, right];
+        let conflicts = conflicting_names(&buffers);
+        assert_eq!(display_tab_name(&buffers[0], &conflicts), "a/main.rs");
+        assert_eq!(display_tab_name(&buffers[1], &conflicts), "b/main.rs");
+    }
+
+    #[test]
+    fn terminal_key_translation_uses_application_cursor_mode() {
+        assert_eq!(
+            translate_key(egui::Key::ArrowUp, egui::Modifiers::NONE, false),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            translate_key(egui::Key::ArrowUp, egui::Modifiers::NONE, true),
+            Some(b"\x1bOA".to_vec())
+        );
+        assert_eq!(
+            translate_key(
+                egui::Key::C,
+                egui::Modifiers {
+                    ctrl: true,
+                    ..Default::default()
+                },
+                false
+            ),
+            Some(vec![3])
+        );
+    }
+
+    #[test]
+    fn common_ancestor_finds_shared_prefix() {
+        let paths = vec![
+            PathBuf::from("/tmp/work/a"),
+            PathBuf::from("/tmp/work/b"),
+            PathBuf::from("/tmp/work/c/file.rs"),
+        ];
+        assert_eq!(common_ancestor(&paths), Some(PathBuf::from("/tmp/work")));
+    }
 }
