@@ -709,6 +709,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-agent-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "core-buffer"
 version = "0.1.0"
 dependencies = [
@@ -812,6 +820,15 @@ dependencies = [
  "tree-sitter-toml-ng",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
+]
+
+[[package]]
+name = "core-terminal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fnug-vt100",
+ "portable-pty",
 ]
 
 [[package]]
@@ -1027,15 +1044,25 @@ name = "edit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "core-agent-protocol",
  "core-buffer",
  "core-diff",
  "core-fs",
  "core-picker",
  "core-syntax",
+ "core-terminal",
  "core-theme",
  "crossterm",
  "ratatui",
  "ui-tui",
+]
+
+[[package]]
+name = "edit-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core-agent-protocol",
 ]
 
 [[package]]
@@ -3917,6 +3944,7 @@ dependencies = [
  "core-fs",
  "core-picker",
  "core-syntax",
+ "core-terminal",
  "core-theme",
  "ratatui",
  "unicode-width 0.2.0",

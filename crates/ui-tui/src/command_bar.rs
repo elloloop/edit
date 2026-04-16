@@ -8,6 +8,7 @@ use ratatui::Frame;
 pub struct CommandBarState {
     pub input: String,
     pub status_message: Option<String>,
+    pub info_override: Option<String>,
     pub file_name: String,
     pub language: String,
     pub cursor_line: usize,
@@ -17,6 +18,8 @@ pub struct CommandBarState {
     pub diff_mode: bool,
     pub editing: bool,
     pub split_mode: bool,
+    pub touched_files: usize,
+    pub external_conflict: bool,
 }
 
 /// Renders the bottom area: info line + command input line.
@@ -46,10 +49,29 @@ fn render_info_line(f: &mut Frame, area: Rect, state: &CommandBarState, theme: &
     let diff_marker = if state.diff_mode { "  diff" } else { "" };
     let edit_marker = if state.editing { "  EDIT" } else { "" };
     let split_marker = if state.split_mode { "  compare" } else { "" };
+    let touched_marker = if state.touched_files > 0 {
+        format!("  touched {}", state.touched_files)
+    } else {
+        String::new()
+    };
+    let conflict_marker = if state.external_conflict {
+        "  CONFLICT"
+    } else {
+        ""
+    };
 
     let accent = Style::default()
         .fg(theme.command_bar_info_accent)
         .bg(theme.command_bar_info_bg);
+
+    if let Some(info_override) = &state.info_override {
+        let line = Line::from(vec![
+            Span::styled("  ", style),
+            Span::styled(info_override, accent),
+        ]);
+        line.render(area, f.buffer_mut());
+        return;
+    }
 
     let sep = Span::styled("  ", style);
 
@@ -87,6 +109,18 @@ fn render_info_line(f: &mut Frame, area: Rect, state: &CommandBarState, theme: &
             edit_marker,
             Style::default()
                 .fg(theme.tab_dirty)
+                .bg(theme.command_bar_info_bg),
+        ),
+        Span::styled(
+            touched_marker,
+            Style::default()
+                .fg(theme.command_bar_info_accent)
+                .bg(theme.command_bar_info_bg),
+        ),
+        Span::styled(
+            conflict_marker,
+            Style::default()
+                .fg(theme.diff_del_fg)
                 .bg(theme.command_bar_info_bg),
         ),
     ];

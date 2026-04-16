@@ -233,6 +233,39 @@ impl Buffer {
         self.clamp_cursor_col();
     }
 
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
+    pub fn select_range(
+        &mut self,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+    ) {
+        if self.line_count() == 0 {
+            self.selection = None;
+            self.cursor_line = 0;
+            self.cursor_col = 0;
+            return;
+        }
+
+        let start_line = start_line.min(self.line_count().saturating_sub(1));
+        let end_line = end_line.min(self.line_count().saturating_sub(1));
+        let start_col = start_col.min(self.line_len(start_line));
+        let end_col = end_col.min(self.line_len(end_line));
+
+        self.selection = Some(Selection {
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+        });
+        self.cursor_line = end_line;
+        self.cursor_col = end_col;
+    }
+
     pub fn line_count(&self) -> usize {
         self.rope.len_lines().max(1)
     }
@@ -537,5 +570,22 @@ mod tests {
         assert_eq!(buffer.cursor_line, 17);
         buffer.move_cursor(Direction::PageUp, 9);
         assert_eq!(buffer.cursor_line, 8);
+    }
+
+    #[test]
+    fn select_range_clamps_and_updates_cursor() {
+        let mut buffer = Buffer::from_string("alpha\nbeta\n");
+        buffer.select_range(0, 2, 8, 99);
+
+        let selection = buffer.selection.as_ref().expect("selection should be set");
+        assert_eq!(selection.start_line, 0);
+        assert_eq!(selection.start_col, 2);
+        assert_eq!(selection.end_line, 2);
+        assert_eq!(selection.end_col, 0);
+        assert_eq!(buffer.cursor_line, 2);
+        assert_eq!(buffer.cursor_col, 0);
+
+        buffer.clear_selection();
+        assert!(buffer.selection.is_none());
     }
 }

@@ -6,7 +6,10 @@ use core_picker::{Picker, PickerPath, SearchMatch};
 use core_syntax::Highlighter;
 use core_theme::Theme;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Style;
+use ratatui::widgets::{Block, Borders};
 use ratatui::Frame;
+use std::fmt::Display;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -19,7 +22,7 @@ use crate::sidebar;
 use crate::tabs::{self, TabInfo};
 
 #[allow(clippy::too_many_arguments)]
-pub fn render_app(
+pub fn render_app<FTerminal, TTouched>(
     f: &mut Frame,
     buffers: &[Buffer],
     active_buffer: usize,
@@ -34,6 +37,7 @@ pub fn render_app(
     file_picker: Option<&Picker<PickerPath>>,
     changed_picker: Option<&Picker<ChangedFile>>,
     grep_picker: Option<&Picker<SearchMatch>>,
+    touched_picker: Option<&Picker<TTouched>>,
     command_input: &str,
     status_message: Option<&str>,
     breadcrumb: &str,
@@ -41,7 +45,19 @@ pub fn render_app(
     matching_bracket: Option<(usize, usize)>,
     wrap_lines: bool,
     editing: bool,
-) {
+    touched_paths: &HashSet<PathBuf>,
+    conflict_paths: &HashSet<PathBuf>,
+    touched_count: usize,
+    current_conflict: bool,
+    workspace_summary: Option<&str>,
+    terminal_workspace_focused: bool,
+    sidebar_focused: bool,
+    root_terminal_ratio_percent: u16,
+    render_terminal_workspace: FTerminal,
+) where
+    FTerminal: FnOnce(&mut Frame, Rect),
+    TTouched: Display + Clone,
+{
     let area = f.area();
 
     // Main vertical layout: tabs | breadcrumb | body | info line | command input
@@ -72,53 +88,50 @@ pub fn render_app(
     tabs::render_tabs(f, tab_area, &tab_infos, active_buffer, theme);
     render_breadcrumb(f, breadcrumb_area, breadcrumb, theme);
 
-    // Body: sidebar (optional) | editor/diff
-    if sidebar_visible {
-        let body_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(30), // sidebar
-                Constraint::Min(1),     // editor
-            ])
-            .split(body_area);
-
-        sidebar::render_sidebar(f, body_layout[0], file_tree, theme);
-        render_editor_or_diff(
-            f,
-            body_layout[1],
-            buffers,
-            active_buffer,
-            split_buffers,
-            theme,
-            highlighters,
-            diff_mode,
-            diffs,
-            last_search,
-            matching_bracket,
-            wrap_lines,
-        );
-    } else {
-        render_editor_or_diff(
-            f,
-            body_area,
-            buffers,
-            active_buffer,
-            split_buffers,
-            theme,
-            highlighters,
-            diff_mode,
-            diffs,
-            last_search,
-            matching_bracket,
-            wrap_lines,
-        );
-    }
+    let [terminal_area, editor_area] = split_root_workspace(body_area, root_terminal_ratio_percent);
+    render_workspace_panel(
+        f,
+        terminal_area,
+        "Terminal Workspace",
+        theme,
+        terminal_workspace_focused,
+        render_terminal_workspace,
+    );
+    render_workspace_panel(
+        f,
+        editor_area,
+        "Editor Workspace",
+        theme,
+        !terminal_workspace_focused,
+        |f, inner| {
+            render_editor_workspace(
+                f,
+                inner,
+                buffers,
+                active_buffer,
+                split_buffers,
+                file_tree,
+                sidebar_visible,
+                sidebar_focused,
+                theme,
+                highlighters,
+                diff_mode,
+                diffs,
+                last_search,
+                matching_bracket,
+                wrap_lines,
+                touched_paths,
+                conflict_paths,
+            );
+        },
+    );
 
     // Command bar (info line + input)
     let buf = &buffers[active_buffer];
     let cb_state = CommandBarState {
         input: command_input.to_string(),
         status_message: status_message.map(|s| s.to_string()),
+        info_override: workspace_summary.map(|s| s.to_string()),
         file_name: buf.file_name(),
         language: buf.language.clone(),
         cursor_line: buf.cursor_line + 1,
@@ -128,6 +141,8 @@ pub fn render_app(
         diff_mode,
         editing,
         split_mode: split_buffers.is_some(),
+        touched_files: touched_count,
+        external_conflict: current_conflict,
     };
     command_bar::render_command_bar(f, command_area, &cb_state, theme);
 
@@ -148,6 +163,132 @@ pub fn render_app(
     if let Some(picker) = grep_picker {
         let overlay = centered_rect(75, 65, area);
         picker_ui::render_picker(f, overlay, picker, "Search Results", theme);
+    }
+    if let Some(picker) = touched_picker {
+        let overlay = centered_rect(70, 60, area);
+        picker_ui::render_picker(
+            f,
+            overlay,
+            picker,
+            "Touched Files (Enter open, Ctrl-D diff, Ctrl-R reveal)",
+            theme,
+        );
+    }
+}
+
+pub fn split_root_workspace(area: Rect, root_terminal_ratio_percent: u16) -> [Rect; 2] {
+    let root_ratio = root_terminal_ratio_percent.clamp(20, 80);
+    let root_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(root_ratio),
+            Constraint::Percentage(100 - root_ratio),
+        ])
+        .split(area);
+    [root_layout[0], root_layout[1]]
+}
+
+pub fn workspace_panel_inner(area: Rect) -> Rect {
+    Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    )
+}
+
+fn render_workspace_panel<F>(
+    f: &mut Frame,
+    area: Rect,
+    title: &str,
+    theme: &Theme,
+    focused: bool,
+    render_inner: F,
+) where
+    F: FnOnce(&mut Frame, Rect),
+{
+    let border_style = if focused {
+        Style::default().fg(theme.command_bar_info_accent)
+    } else {
+        Style::default().fg(theme.border)
+    };
+    let block = Block::default()
+        .title(format!(" {title} "))
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .style(Style::default().bg(theme.editor_bg));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    render_inner(f, inner);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_editor_workspace(
+    f: &mut Frame,
+    area: Rect,
+    buffers: &[Buffer],
+    active_buffer: usize,
+    split_buffers: Option<(usize, usize)>,
+    file_tree: &FileTree,
+    sidebar_visible: bool,
+    sidebar_focused: bool,
+    theme: &Theme,
+    highlighters: &HashMap<usize, Highlighter>,
+    diff_mode: bool,
+    diffs: &HashMap<PathBuf, FileDiff>,
+    last_search: &str,
+    matching_bracket: Option<(usize, usize)>,
+    wrap_lines: bool,
+    touched_paths: &HashSet<PathBuf>,
+    conflict_paths: &HashSet<PathBuf>,
+) {
+    if sidebar_visible {
+        let body_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(30), // sidebar
+                Constraint::Min(1),     // editor
+            ])
+            .split(area);
+
+        sidebar::render_sidebar(
+            f,
+            body_layout[0],
+            file_tree,
+            sidebar_focused,
+            touched_paths,
+            conflict_paths,
+            theme,
+        );
+        render_editor_or_diff(
+            f,
+            body_layout[1],
+            buffers,
+            active_buffer,
+            split_buffers,
+            theme,
+            highlighters,
+            diff_mode,
+            diffs,
+            last_search,
+            matching_bracket,
+            wrap_lines,
+        );
+    } else {
+        render_editor_or_diff(
+            f,
+            area,
+            buffers,
+            active_buffer,
+            split_buffers,
+            theme,
+            highlighters,
+            diff_mode,
+            diffs,
+            last_search,
+            matching_bracket,
+            wrap_lines,
+        );
     }
 }
 
@@ -344,4 +485,20 @@ fn display_tab_name(buffer: &Buffer, conflict_names: &HashSet<String>) -> String
     }
 
     file_name
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_root_workspace;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn root_workspace_split_respects_terminal_ratio() {
+        let area = Rect::new(0, 0, 100, 40);
+        let [terminal, editor] = split_root_workspace(area, 42);
+        assert_eq!(terminal.width, 42);
+        assert_eq!(editor.width, 58);
+        assert_eq!(terminal.height, 40);
+        assert_eq!(editor.height, 40);
+    }
 }

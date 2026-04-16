@@ -12,3 +12,4 @@ core-theme = { workspace = true }
 core-picker = { workspace = true }
 core-fs = { workspace = true }
 core-syntax = { workspace = true }
+core-terminal = { workspace = true }

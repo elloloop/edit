@@ -5,13 +5,29 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Widget};
 use ratatui::Frame;
+use std::collections::HashSet;
+use std::path::PathBuf;
 
-pub fn render_sidebar(f: &mut Frame, area: Rect, tree: &FileTree, theme: &Theme) {
+pub fn render_sidebar(
+    f: &mut Frame,
+    area: Rect,
+    tree: &FileTree,
+    focused: bool,
+    touched_paths: &HashSet<PathBuf>,
+    conflict_paths: &HashSet<PathBuf>,
+    theme: &Theme,
+) {
+    let border_style = if focused {
+        Style::default().fg(theme.command_bar_info_accent)
+    } else {
+        Style::default().fg(theme.border)
+    };
+    let title = if focused { " Files [focus] " } else { " Files " };
     let block = Block::default()
         .borders(Borders::RIGHT)
-        .border_style(Style::default().fg(theme.border))
+        .border_style(border_style)
         .style(Style::default().bg(theme.sidebar_bg).fg(theme.sidebar_fg))
-        .title(" Files ");
+        .title(title);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -49,7 +65,14 @@ pub fn render_sidebar(f: &mut Frame, area: Rect, tree: &FileTree, theme: &Theme)
             file_icon(&entry.name)
         };
         let git_marker = entry.git_status.map_or(" ".to_string(), |c| format!("{c}"));
-        let label = format!("{indent}{icon} {git_marker} {}", entry.name);
+        let external_marker = if conflict_paths.contains(&entry.path) {
+            "!"
+        } else if touched_paths.contains(&entry.path) {
+            "~"
+        } else {
+            " "
+        };
+        let label = format!("{indent}{icon} {git_marker}{external_marker} {}", entry.name);
         let max_width = inner.width as usize;
         let display: String = label.chars().take(max_width).collect();
 

@@ -93,15 +93,15 @@ impl Theme {
             diff_hunk_bg: Color::Rgb(30, 50, 75),
             diff_hunk_fg: Color::Rgb(140, 180, 220),
             // Syntax — VS Code Dark+ token colors
-            syntax_keyword: Color::Rgb(86, 156, 214),    // blue — if, fn, let, pub
-            syntax_string: Color::Rgb(206, 145, 120),     // orange — "strings"
-            syntax_comment: Color::Rgb(106, 153, 85),     // green — // comments
-            syntax_function: Color::Rgb(220, 220, 170),   // yellow — function names
-            syntax_type: Color::Rgb(78, 201, 176),        // teal — type names
-            syntax_number: Color::Rgb(181, 206, 168),     // light green — numbers
-            syntax_operator: Color::Rgb(212, 212, 212),   // light grey — operators
-            syntax_variable: Color::Rgb(156, 220, 254),   // light blue — variables
-            syntax_constant: Color::Rgb(100, 150, 224),   // medium blue — constants
+            syntax_keyword: Color::Rgb(86, 156, 214), // blue — if, fn, let, pub
+            syntax_string: Color::Rgb(206, 145, 120), // orange — "strings"
+            syntax_comment: Color::Rgb(106, 153, 85), // green — // comments
+            syntax_function: Color::Rgb(220, 220, 170), // yellow — function names
+            syntax_type: Color::Rgb(78, 201, 176),    // teal — type names
+            syntax_number: Color::Rgb(181, 206, 168), // light green — numbers
+            syntax_operator: Color::Rgb(212, 212, 212), // light grey — operators
+            syntax_variable: Color::Rgb(156, 220, 254), // light blue — variables
+            syntax_constant: Color::Rgb(100, 150, 224), // medium blue — constants
             // Picker
             picker_bg: Color::Rgb(37, 37, 38),
             picker_fg: Color::Rgb(204, 204, 204),
@@ -122,25 +122,35 @@ impl Theme {
 
     pub fn style_for_token(&self, token_type: &str) -> Style {
         let color = match token_type {
-            "keyword" | "keyword.control" | "keyword.function" | "keyword.operator"
-            | "keyword.return" | "keyword.storage" | "keyword.type" | "keyword.modifier"
-            | "keyword.import" | "keyword.conditional" | "keyword.repeat" | "keyword.exception" => {
-                self.syntax_keyword
-            }
+            "keyword"
+            | "keyword.control"
+            | "keyword.function"
+            | "keyword.operator"
+            | "keyword.return"
+            | "keyword.storage"
+            | "keyword.type"
+            | "keyword.modifier"
+            | "keyword.import"
+            | "keyword.conditional"
+            | "keyword.repeat"
+            | "keyword.exception" => self.syntax_keyword,
             "string" | "string.special" => self.syntax_string,
             "comment" | "comment.line" | "comment.block" | "comment.documentation" => {
                 self.syntax_comment
             }
-            "function" | "function.call" | "function.method" | "function.builtin"
-            | "method" | "method.call" => self.syntax_function,
+            "function" | "function.call" | "function.method" | "function.builtin" | "method"
+            | "method.call" => self.syntax_function,
             "type" | "type.builtin" | "type.definition" | "constructor" | "class" => {
                 self.syntax_type
             }
             "number" | "float" | "integer" => self.syntax_number,
-            "operator" | "punctuation" | "punctuation.bracket" | "punctuation.delimiter"
+            "operator"
+            | "punctuation"
+            | "punctuation.bracket"
+            | "punctuation.delimiter"
             | "punctuation.special" => self.syntax_operator,
-            "variable" | "variable.parameter" | "variable.builtin" | "property"
-            | "field" | "parameter" => self.syntax_variable,
+            "variable" | "variable.parameter" | "variable.builtin" | "property" | "field"
+            | "parameter" => self.syntax_variable,
             "constant" | "constant.builtin" | "boolean" | "attribute" | "label" => {
                 self.syntax_constant
             }

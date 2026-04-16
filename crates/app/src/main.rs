@@ -1,6 +1,9 @@
+mod agent_bridge;
 mod events;
 mod keybindings;
 mod state;
+mod terminal_input;
+mod workspace;
 
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;

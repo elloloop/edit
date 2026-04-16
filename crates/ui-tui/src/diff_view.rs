@@ -40,10 +40,7 @@ pub fn render_diff(f: &mut Frame, area: Rect, diff: &FileDiff, theme: &Theme) {
         ));
         let y = inner.y + lines_rendered as u16;
         if y < inner.y + inner.height {
-            header_line.render(
-                Rect::new(inner.x, y, inner.width, 1),
-                f.buffer_mut(),
-            );
+            header_line.render(Rect::new(inner.x, y, inner.width, 1), f.buffer_mut());
         }
         lines_rendered += 1;
 
@@ -56,21 +53,15 @@ pub fn render_diff(f: &mut Frame, area: Rect, diff: &FileDiff, theme: &Theme) {
             let (prefix, style) = match diff_line.tag {
                 DiffTag::Add => (
                     "+",
-                    Style::default()
-                        .fg(theme.diff_add_fg)
-                        .bg(theme.diff_add_bg),
+                    Style::default().fg(theme.diff_add_fg).bg(theme.diff_add_bg),
                 ),
                 DiffTag::Delete => (
                     "-",
-                    Style::default()
-                        .fg(theme.diff_del_fg)
-                        .bg(theme.diff_del_bg),
+                    Style::default().fg(theme.diff_del_fg).bg(theme.diff_del_bg),
                 ),
                 DiffTag::Context => (
                     " ",
-                    Style::default()
-                        .fg(theme.editor_fg)
-                        .bg(theme.editor_bg),
+                    Style::default().fg(theme.editor_fg).bg(theme.editor_bg),
                 ),
             };
 
@@ -91,10 +82,7 @@ pub fn render_diff(f: &mut Frame, area: Rect, diff: &FileDiff, theme: &Theme) {
             let line = Line::from(Span::styled(padded, style));
             let y = inner.y + lines_rendered as u16;
             if y < inner.y + inner.height {
-                line.render(
-                    Rect::new(inner.x, y, inner.width, 1),
-                    f.buffer_mut(),
-                );
+                line.render(Rect::new(inner.x, y, inner.width, 1), f.buffer_mut());
             }
             lines_rendered += 1;
         }

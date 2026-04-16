@@ -1,4 +1,5 @@
 use core_buffer::Buffer;
+use core_buffer::Selection;
 use core_diff::{DiffTag, FileDiff};
 use core_syntax::Highlighter;
 use core_theme::Theme;
@@ -104,6 +105,7 @@ pub fn render_editor(
             let spans = if let Some(hl) = highlighter {
                 let hl_line = hl.highlight_line(&source, *line_idx);
                 build_highlighted_spans(
+                    *line_idx,
                     line_content,
                     segment,
                     segment_idx,
@@ -115,12 +117,23 @@ pub fn render_editor(
                     matching_bracket
                         .filter(|(line, _)| *line == *line_idx)
                         .map(|(_, col)| col),
+                    buffer.selection.as_ref(),
                 )
             } else {
-                vec![Span::styled(
-                    segment.to_string(),
-                    default_line_style(theme, is_cursor_line),
-                )]
+                build_plain_spans(
+                    *line_idx,
+                    line_content,
+                    segment,
+                    segment_idx,
+                    editor_width as usize,
+                    theme,
+                    search_query,
+                    is_cursor_line,
+                    matching_bracket
+                        .filter(|(line, _)| *line == *line_idx)
+                        .map(|(_, col)| col),
+                    buffer.selection.as_ref(),
+                )
             };
 
             let content_line = Line::from(spans);
@@ -151,6 +164,7 @@ pub fn render_editor(
 }
 
 fn build_highlighted_spans(
+    line_idx: usize,
     line: &str,
     segment: &str,
     segment_idx: usize,
@@ -160,12 +174,21 @@ fn build_highlighted_spans(
     search_query: &str,
     is_cursor_line: bool,
     matching_bracket_col: Option<usize>,
+    selection: Option<&Selection>,
 ) -> Vec<Span<'static>> {
     if hl_spans.is_empty() || line.is_empty() {
-        return vec![Span::styled(
-            segment.to_string(),
-            default_line_style(theme, is_cursor_line),
-        )];
+        return build_plain_spans(
+            line_idx,
+            line,
+            segment,
+            segment_idx,
+            wrap_width,
+            theme,
+            search_query,
+            is_cursor_line,
+            matching_bracket_col,
+            selection,
+        );
     }
 
     let chars: Vec<char> = line.chars().collect();
@@ -195,6 +218,8 @@ fn build_highlighted_spans(
                 search_query,
                 theme,
                 matching_bracket_col,
+                selection,
+                line_idx,
             );
         }
 
@@ -217,6 +242,8 @@ fn build_highlighted_spans(
             search_query,
             theme,
             matching_bracket_col,
+            selection,
+            line_idx,
         );
         pos = end;
     }
@@ -234,9 +261,51 @@ fn build_highlighted_spans(
             search_query,
             theme,
             matching_bracket_col,
+            selection,
+            line_idx,
         );
     }
 
+    result
+}
+
+fn build_plain_spans(
+    line_idx: usize,
+    line: &str,
+    segment: &str,
+    segment_idx: usize,
+    wrap_width: usize,
+    theme: &Theme,
+    search_query: &str,
+    is_cursor_line: bool,
+    matching_bracket_col: Option<usize>,
+    selection: Option<&Selection>,
+) -> Vec<Span<'static>> {
+    if line.is_empty() {
+        return vec![Span::styled(
+            segment.to_string(),
+            default_line_style(theme, is_cursor_line),
+        )];
+    }
+
+    let chars: Vec<char> = line.chars().collect();
+    let segment_start = segment_idx * wrap_width;
+    let segment_end = (segment_start + segment.chars().count()).min(chars.len());
+    let mut result = Vec::new();
+    push_segment_text(
+        &mut result,
+        &chars,
+        segment_start,
+        segment_end,
+        segment_start,
+        segment_end,
+        default_line_style(theme, is_cursor_line),
+        search_query,
+        theme,
+        matching_bracket_col,
+        selection,
+        line_idx,
+    );
     result
 }
 
@@ -251,6 +320,8 @@ fn push_segment_text(
     search_query: &str,
     theme: &Theme,
     matching_bracket_col: Option<usize>,
+    selection: Option<&Selection>,
+    line_idx: usize,
 ) {
     let slice_start = start.max(segment_start);
     let slice_end = end.min(segment_end);
@@ -272,6 +343,11 @@ fn push_segment_text(
                 ch_style = ch_style.bg(theme.diff_hunk_bg).fg(theme.diff_hunk_fg);
             }
         }
+        if selection.is_some_and(|selection| selection_contains(selection, line_idx, idx)) {
+            ch_style = ch_style
+                .bg(theme.command_bar_info_accent)
+                .fg(theme.editor_bg);
+        }
         if !search_query.is_empty() {
             let line_text: String = chars.iter().collect();
             if matches_search_at(&line_text, idx, search_query) {
@@ -281,6 +357,34 @@ fn push_segment_text(
             }
         }
         result.push(Span::styled(ch.to_string(), ch_style));
+    }
+}
+
+fn selection_contains(selection: &Selection, line_idx: usize, col_idx: usize) -> bool {
+    let ((start_line, start_col), (end_line, end_col)) =
+        normalized_selection_bounds(selection);
+    if line_idx < start_line || line_idx > end_line {
+        return false;
+    }
+    if start_line == end_line {
+        return col_idx >= start_col && col_idx < end_col;
+    }
+    if line_idx == start_line {
+        return col_idx >= start_col;
+    }
+    if line_idx == end_line {
+        return col_idx < end_col;
+    }
+    true
+}
+
+fn normalized_selection_bounds(selection: &Selection) -> ((usize, usize), (usize, usize)) {
+    let start = (selection.start_line, selection.start_col);
+    let end = (selection.end_line, selection.end_col);
+    if start <= end {
+        (start, end)
+    } else {
+        (end, start)
     }
 }
 

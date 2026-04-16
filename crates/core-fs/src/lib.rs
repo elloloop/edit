@@ -1,6 +1,7 @@
 use ignore::WalkBuilder;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::Sender;
@@ -83,6 +84,72 @@ impl FileTree {
                 self.rebuild_entries();
             }
         }
+    }
+
+    pub fn collapse_selected_or_select_parent(&mut self) -> bool {
+        let Some(entry) = self.selected_entry().cloned() else {
+            return false;
+        };
+
+        if entry.is_dir && self.expanded.contains(&entry.path) {
+            self.expanded.remove(&entry.path);
+            self.rebuild_entries();
+            if let Some(idx) = self.entries.iter().position(|candidate| candidate.path == entry.path) {
+                self.selected = idx;
+                return true;
+            }
+            return false;
+        }
+
+        self.select_nearest_visible_parent(&entry.path)
+    }
+
+    pub fn expand_selected_or_select_child(&mut self) -> bool {
+        let Some(entry) = self.selected_entry().cloned() else {
+            return false;
+        };
+        if !entry.is_dir {
+            return false;
+        }
+
+        if !self.expanded.contains(&entry.path) {
+            self.expanded.insert(entry.path.clone());
+            self.rebuild_entries();
+            if let Some(idx) = self.entries.iter().position(|candidate| candidate.path == entry.path) {
+                self.selected = idx;
+            }
+            return true;
+        }
+
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .enumerate()
+            .skip(self.selected + 1)
+            .take_while(|(_, candidate)| candidate.depth > entry.depth)
+            .find_map(|(idx, candidate)| (candidate.depth == entry.depth + 1).then_some(idx))
+        {
+            self.selected = idx;
+            return true;
+        }
+
+        false
+    }
+
+    pub fn select_first(&mut self) -> bool {
+        if self.entries.is_empty() {
+            return false;
+        }
+        self.selected = 0;
+        true
+    }
+
+    pub fn select_last(&mut self) -> bool {
+        if self.entries.is_empty() {
+            return false;
+        }
+        self.selected = self.entries.len() - 1;
+        true
     }
 
     pub fn visible_entries(&self) -> Vec<&FileEntry> {
@@ -207,6 +274,22 @@ impl FileTree {
             }
         }
     }
+
+    fn select_nearest_visible_parent(&mut self, path: &Path) -> bool {
+        let mut parent = path.parent();
+        while let Some(candidate) = parent {
+            if let Some(idx) = self
+                .entries
+                .iter()
+                .position(|entry| entry.path == candidate)
+            {
+                self.selected = idx;
+                return true;
+            }
+            parent = candidate.parent();
+        }
+        false
+    }
 }
 
 fn load_git_statuses(root: &Path) -> std::collections::HashMap<PathBuf, char> {
@@ -256,9 +339,14 @@ pub struct FileWatcherHandle {
 }
 
 pub fn watch_directory(root: &Path, tx: Sender<FileEvent>) -> anyhow::Result<FileWatcherHandle> {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let callback_root = root.clone();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             for path in event.paths {
+                if should_ignore_watch_path(&callback_root, &path) {
+                    continue;
+                }
                 let file_event = match event.kind {
                     EventKind::Create(_) => Some(FileEvent::Created(path)),
                     EventKind::Modify(_) => Some(FileEvent::Modified(path)),
@@ -272,7 +360,111 @@ pub fn watch_directory(root: &Path, tx: Sender<FileEvent>) -> anyhow::Result<Fil
         }
     })?;
 
-    watcher.watch(root, RecursiveMode::Recursive)?;
+    watcher.watch(&root, RecursiveMode::Recursive)?;
 
     Ok(FileWatcherHandle { _watcher: watcher })
+}
+
+fn should_ignore_watch_path(root: &Path, path: &Path) -> bool {
+    const IGNORED_SEGMENTS: &[&str] = &[".git", "target", "node_modules", ".next", ".turbo"];
+
+    path.strip_prefix(root)
+        .ok()
+        .into_iter()
+        .flat_map(|relative| relative.components())
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => Some(segment),
+            _ => None,
+        })
+        .any(|segment| IGNORED_SEGMENTS.iter().any(|ignored| segment == OsStr::new(ignored)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_ignore_watch_path, FileTree};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn left_collapses_selected_directory() {
+        let dir = test_dir("collapse-dir");
+        fs::create_dir_all(dir.join("nested")).unwrap();
+
+        let mut tree = FileTree::build(&dir).unwrap();
+        let nested = dir.join("nested").canonicalize().unwrap();
+        tree.reveal_path(&nested);
+        tree.expanded.insert(nested.clone());
+        tree.refresh();
+
+        assert!(tree.expanded.contains(&nested));
+        assert!(tree.collapse_selected_or_select_parent());
+        assert!(!tree.expanded.contains(&nested));
+        assert_eq!(tree.selected_entry().map(|entry| entry.path.clone()), Some(nested));
+    }
+
+    #[test]
+    fn left_on_file_selects_parent_directory() {
+        let dir = test_dir("file-parent");
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        let file = dir.join("nested/file.txt");
+        fs::write(&file, "hello\n").unwrap();
+
+        let mut tree = FileTree::build(&dir).unwrap();
+        tree.reveal_path(&file);
+
+        assert!(tree.collapse_selected_or_select_parent());
+        assert_eq!(
+            tree.selected_entry().map(|entry| entry.path.clone()),
+            Some(dir.join("nested").canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn right_on_expanded_directory_selects_first_child() {
+        let dir = test_dir("dir-child");
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        let file = dir.join("nested/file.txt");
+        fs::write(&file, "hello\n").unwrap();
+
+        let mut tree = FileTree::build(&dir).unwrap();
+        let nested = dir.join("nested").canonicalize().unwrap();
+        tree.reveal_path(&nested);
+        assert!(tree.expand_selected_or_select_child());
+
+        assert!(tree.expand_selected_or_select_child());
+        assert_eq!(
+            tree.selected_entry().map(|entry| entry.path.clone()),
+            Some(file.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn watcher_filter_ignores_generated_paths() {
+        let root = PathBuf::from("/tmp/workspace");
+
+        assert!(should_ignore_watch_path(&root, &root.join("target/debug/edit")));
+        assert!(should_ignore_watch_path(
+            &root,
+            &root.join(".git/objects/ab/cdef")
+        ));
+        assert!(should_ignore_watch_path(
+            &root,
+            &root.join("website/node_modules/react/index.js")
+        ));
+        assert!(!should_ignore_watch_path(
+            &root,
+            &root.join("crates/app/src/main.rs")
+        ));
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("edit-core-fs-tests-{name}-{unique}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 }

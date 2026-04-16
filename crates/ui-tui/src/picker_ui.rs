@@ -32,39 +32,24 @@ pub fn render_picker<T: Clone + ToString>(
     let query_line = Line::from(vec![
         Span::styled(
             " > ",
-            Style::default()
-                .fg(theme.picker_match)
-                .bg(theme.picker_bg),
+            Style::default().fg(theme.picker_match).bg(theme.picker_bg),
         ),
         Span::styled(
             picker.query().to_string(),
-            Style::default()
-                .fg(theme.picker_fg)
-                .bg(theme.picker_bg),
+            Style::default().fg(theme.picker_fg).bg(theme.picker_bg),
         ),
         Span::styled(
             "_",
-            Style::default()
-                .fg(theme.picker_match)
-                .bg(theme.picker_bg),
+            Style::default().fg(theme.picker_match).bg(theme.picker_bg),
         ),
     ]);
-    query_line.render(
-        Rect::new(inner.x, inner.y, inner.width, 1),
-        f.buffer_mut(),
-    );
+    query_line.render(Rect::new(inner.x, inner.y, inner.width, 1), f.buffer_mut());
 
     // Count line
-    let count_text = format!(
-        " {}/{} ",
-        picker.filtered_count(),
-        picker.filtered_count()
-    );
+    let count_text = format!(" {}/{} ", picker.filtered_count(), picker.filtered_count());
     let count_line = Line::from(Span::styled(
         count_text,
-        Style::default()
-            .fg(theme.picker_fg)
-            .bg(theme.picker_bg),
+        Style::default().fg(theme.picker_fg).bg(theme.picker_bg),
     ));
     if inner.height >= 2 {
         count_line.render(
@@ -104,13 +89,7 @@ pub fn render_picker<T: Clone + ToString>(
         let display: String = text.chars().take(max_w).collect();
         let padded = format!(" {display:<width$}", width = max_w.saturating_sub(1));
 
-        let line = Line::from(Span::styled(
-            padded,
-            Style::default().fg(fg).bg(bg),
-        ));
-        line.render(
-            Rect::new(inner.x, y, inner.width, 1),
-            f.buffer_mut(),
-        );
+        let line = Line::from(Span::styled(padded, Style::default().fg(fg).bg(bg)));
+        line.render(Rect::new(inner.x, y, inner.width, 1), f.buffer_mut());
     }
 }
