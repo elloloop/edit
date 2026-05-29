@@ -6,4 +6,5 @@ pub mod layout;
 pub mod picker_ui;
 pub mod sidebar;
 pub mod statusbar;
+pub mod terminal_view;
 pub mod tabs;

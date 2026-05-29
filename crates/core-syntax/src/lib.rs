@@ -204,13 +204,18 @@ fn map_node_to_token(node: &Node, lang: &str) -> Option<String> {
         "line_comment" | "block_comment" | "comment" => "comment",
 
         // Strings
-        "string_literal" | "string" | "string_content" | "raw_string_literal"
-        | "interpreted_string_literal" | "template_string" | "string_fragment" => "string",
+        "string_literal"
+        | "string"
+        | "string_content"
+        | "raw_string_literal"
+        | "interpreted_string_literal"
+        | "template_string"
+        | "string_fragment" => "string",
         "char_literal" => "string",
 
         // Numbers
-        "integer_literal" | "float_literal" | "number" | "int_literal"
-        | "imaginary_literal" | "integer" | "float" => "number",
+        "integer_literal" | "float_literal" | "number" | "int_literal" | "imaginary_literal"
+        | "integer" | "float" => "number",
 
         // Booleans
         "true" | "false" | "boolean" => "constant.builtin",
@@ -226,9 +231,9 @@ fn map_node_to_token(node: &Node, lang: &str) -> Option<String> {
         "call_expression" => return None,
 
         // Operators
-        "!" | "!=" | "%" | "&" | "&&" | "*" | "+" | "-" | "/" | "<" | "<<" | "<="
-        | "=" | "==" | ">" | ">=" | ">>" | "^" | "|" | "||" | "~" | "+=" | "-="
-        | "*=" | "/=" | "=>" | "->" | ".." | "..=" | "::" => "operator",
+        "!" | "!=" | "%" | "&" | "&&" | "*" | "+" | "-" | "/" | "<" | "<<" | "<=" | "=" | "=="
+        | ">" | ">=" | ">>" | "^" | "|" | "||" | "~" | "+=" | "-=" | "*=" | "/=" | "=>" | "->"
+        | ".." | "..=" | "::" => "operator",
 
         // Punctuation
         "(" | ")" | "[" | "]" | "{" | "}" => "punctuation.bracket",
@@ -266,13 +271,13 @@ fn map_language_specific(node: &Node, kind: &str, lang: &str) -> Option<String> 
 fn map_rust_node(node: &Node, kind: &str) -> Option<String> {
     let token = match kind {
         // Keywords
-        "fn" | "let" | "mut" | "const" | "static" | "pub" | "use" | "mod" | "crate"
-        | "extern" | "self" | "super" | "struct" | "enum" | "trait" | "impl" | "type"
-        | "where" | "as" | "ref" | "move" | "async" | "await" | "dyn" | "unsafe"
-        | "abstract" | "become" | "box" | "do" | "final" | "macro" | "override"
-        | "priv" | "typeof" | "unsized" | "virtual" | "yield" => "keyword",
-        "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue"
-        | "return" | "in" => "keyword.control",
+        "fn" | "let" | "mut" | "const" | "static" | "pub" | "use" | "mod" | "crate" | "extern"
+        | "self" | "super" | "struct" | "enum" | "trait" | "impl" | "type" | "where" | "as"
+        | "ref" | "move" | "async" | "await" | "dyn" | "unsafe" | "abstract" | "become" | "box"
+        | "do" | "final" | "macro" | "override" | "priv" | "typeof" | "unsized" | "virtual"
+        | "yield" => "keyword",
+        "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return"
+        | "in" => "keyword.control",
 
         // Primitive types
         "primitive_type" | "mutable_specifier" => "type.builtin",
@@ -396,9 +401,10 @@ fn map_js_node(node: &Node, kind: &str) -> Option<String> {
         // Template
         "template_substitution" => return None,
         "`" => "string",
-        "${" | "}" if node
-            .parent()
-            .is_some_and(|p| p.kind() == "template_substitution") =>
+        "${" | "}"
+            if node
+                .parent()
+                .is_some_and(|p| p.kind() == "template_substitution") =>
         {
             "punctuation.special"
         }
@@ -411,8 +417,8 @@ fn map_js_node(node: &Node, kind: &str) -> Option<String> {
 fn map_python_node(node: &Node, kind: &str) -> Option<String> {
     let token = match kind {
         // Keywords
-        "def" | "class" | "lambda" | "global" | "nonlocal" | "del" | "assert" | "with"
-        | "as" | "is" | "in" | "not" | "and" | "or" | "async" | "await" | "yield" => "keyword",
+        "def" | "class" | "lambda" | "global" | "nonlocal" | "del" | "assert" | "with" | "as"
+        | "is" | "in" | "not" | "and" | "or" | "async" | "await" | "yield" => "keyword",
         "if" | "elif" | "else" | "for" | "while" | "break" | "continue" | "return" | "try"
         | "except" | "finally" | "raise" | "pass" => "keyword.control",
         "import" | "from" => "keyword.import",
@@ -472,9 +478,10 @@ fn map_python_node(node: &Node, kind: &str) -> Option<String> {
 fn map_go_node(node: &Node, kind: &str) -> Option<String> {
     let token = match kind {
         // Keywords
-        "func" | "var" | "const" | "type" | "struct" | "interface" | "map" | "chan"
-        | "package" | "import" | "defer" | "go" | "range" | "select" | "case"
-        | "default" | "fallthrough" => "keyword",
+        "func" | "var" | "const" | "type" | "struct" | "interface" | "map" | "chan" | "package"
+        | "import" | "defer" | "go" | "range" | "select" | "case" | "default" | "fallthrough" => {
+            "keyword"
+        }
         "if" | "else" | "for" | "switch" | "break" | "continue" | "return" | "goto" => {
             "keyword.control"
         }

@@ -28,6 +28,7 @@ cargo install --path crates/app
 edit                    # open in current directory
 edit src/main.rs        # open a specific file
 edit .                  # open directory
+edit crates website     # open multiple root folders
 ```
 
 ## Keybindings
@@ -41,10 +42,24 @@ edit .                  # open directory
 | Ctrl-S | Save |
 | Ctrl-W | Close tab |
 | Ctrl-Q | Quit |
+| Ctrl-Left / Ctrl-Right | Move by word |
+| Ctrl-Home / Ctrl-End | Jump to start/end of file |
+| Ctrl-Z / Ctrl-Shift-Z | Undo / redo |
 | / | Search in file |
 | : | Command palette |
 | ? | Help overlay |
 | F8 | Next diff hunk |
+
+Command bar additions:
+- `changes` — pick from git-changed files
+- `grep <pattern>` — search across the workspace
+- `compare <file1> <file2>` — open split compare view
+- `edit` — enter edit mode
+- `wrap` — toggle word wrap
+
+Benchmarks:
+- `edit --benchmark <path>` — render once, print startup time in milliseconds
+- `./scripts/benchmark.sh <path>` — compare RSS/startup across `edit`, `edit-gui`, and VS Code
 
 ## Architecture
 

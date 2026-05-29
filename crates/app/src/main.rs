@@ -1,22 +1,39 @@
+mod agent_bridge;
 mod events;
 mod keybindings;
 mod state;
+mod terminal_input;
+mod workspace;
 
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 use state::AppState;
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).map(PathBuf::from);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let benchmark = args.iter().any(|arg| arg == "--benchmark");
+    let paths: Vec<PathBuf> = args
+        .iter()
+        .filter(|arg| arg.as_str() != "--benchmark")
+        .map(PathBuf::from)
+        .collect();
 
-    let mut state = AppState::new(path)?;
+    let mut state = AppState::new(paths)?;
+    let start = std::time::Instant::now();
+
+    if benchmark {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend)?;
+        events::render_once(&mut state, &mut terminal)?;
+        println!("{}", start.elapsed().as_millis());
+        return Ok(());
+    }
 
     // Setup terminal
     enable_raw_mode()?;
@@ -25,7 +42,6 @@ fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Run
     let result = events::run(&mut state, &mut terminal);
 
     // Cleanup
@@ -36,6 +52,5 @@ fn main() -> anyhow::Result<()> {
         DisableMouseCapture
     )?;
     terminal.show_cursor()?;
-
     result
 }

@@ -8,6 +8,7 @@ use ratatui::Frame;
 pub struct CommandBarState {
     pub input: String,
     pub status_message: Option<String>,
+    pub info_override: Option<String>,
     pub file_name: String,
     pub language: String,
     pub cursor_line: usize,
@@ -15,6 +16,10 @@ pub struct CommandBarState {
     pub total_lines: usize,
     pub dirty: bool,
     pub diff_mode: bool,
+    pub editing: bool,
+    pub split_mode: bool,
+    pub touched_files: usize,
+    pub external_conflict: bool,
 }
 
 /// Renders the bottom area: info line + command input line.
@@ -42,17 +47,43 @@ fn render_info_line(f: &mut Frame, area: Rect, state: &CommandBarState, theme: &
 
     let dirty_marker = if state.dirty { " [+]" } else { "" };
     let diff_marker = if state.diff_mode { "  diff" } else { "" };
+    let edit_marker = if state.editing { "  EDIT" } else { "" };
+    let split_marker = if state.split_mode { "  compare" } else { "" };
+    let touched_marker = if state.touched_files > 0 {
+        format!("  touched {}", state.touched_files)
+    } else {
+        String::new()
+    };
+    let conflict_marker = if state.external_conflict {
+        "  CONFLICT"
+    } else {
+        ""
+    };
 
     let accent = Style::default()
         .fg(theme.command_bar_info_accent)
         .bg(theme.command_bar_info_bg);
+
+    if let Some(info_override) = &state.info_override {
+        let line = Line::from(vec![
+            Span::styled("  ", style),
+            Span::styled(info_override, accent),
+        ]);
+        line.render(area, f.buffer_mut());
+        return;
+    }
 
     let sep = Span::styled("  ", style);
 
     let spans = vec![
         Span::styled("  ", style),
         Span::styled(&state.file_name, accent),
-        Span::styled(dirty_marker, Style::default().fg(theme.tab_dirty).bg(theme.command_bar_info_bg)),
+        Span::styled(
+            dirty_marker,
+            Style::default()
+                .fg(theme.tab_dirty)
+                .bg(theme.command_bar_info_bg),
+        ),
         sep.clone(),
         Span::styled(&state.language, style),
         sep.clone(),
@@ -62,7 +93,36 @@ fn render_info_line(f: &mut Frame, area: Rect, state: &CommandBarState, theme: &
         ),
         sep.clone(),
         Span::styled(format!("{} lines", state.total_lines), style),
-        Span::styled(diff_marker, Style::default().fg(theme.command_bar_info_accent).bg(theme.command_bar_info_bg)),
+        Span::styled(
+            diff_marker,
+            Style::default()
+                .fg(theme.command_bar_info_accent)
+                .bg(theme.command_bar_info_bg),
+        ),
+        Span::styled(
+            split_marker,
+            Style::default()
+                .fg(theme.command_bar_info_accent)
+                .bg(theme.command_bar_info_bg),
+        ),
+        Span::styled(
+            edit_marker,
+            Style::default()
+                .fg(theme.tab_dirty)
+                .bg(theme.command_bar_info_bg),
+        ),
+        Span::styled(
+            touched_marker,
+            Style::default()
+                .fg(theme.command_bar_info_accent)
+                .bg(theme.command_bar_info_bg),
+        ),
+        Span::styled(
+            conflict_marker,
+            Style::default()
+                .fg(theme.diff_del_fg)
+                .bg(theme.command_bar_info_bg),
+        ),
     ];
 
     let line = Line::from(spans);
@@ -90,7 +150,13 @@ fn render_input_line(f: &mut Frame, area: Rect, state: &CommandBarState, theme: 
         .fg(theme.command_bar_bg)
         .bg(theme.command_bar_fg);
 
-    if state.input.is_empty() {
+    if state.editing && state.input.is_empty() {
+        let line = Line::from(vec![
+            Span::styled("  \u{276f} ", prompt_style),
+            Span::styled("Edit mode (Esc to return)", style),
+        ]);
+        line.render(area, f.buffer_mut());
+    } else if state.input.is_empty() {
         // Show status message or placeholder
         let display_text = if let Some(ref msg) = state.status_message {
             msg.clone()

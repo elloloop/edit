@@ -79,7 +79,10 @@ impl<T: Clone + ToString> Picker<T> {
     }
 
     pub fn filtered_items(&self) -> Vec<&T> {
-        self.filtered.iter().map(|(idx, _)| &self.items[*idx]).collect()
+        self.filtered
+            .iter()
+            .map(|(idx, _)| &self.items[*idx])
+            .collect()
     }
 
     pub fn filtered_count(&self) -> usize {
@@ -145,6 +148,27 @@ pub struct Command {
     pub name: String,
     pub description: String,
     pub shortcut: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchMatch {
+    pub path: PathBuf,
+    pub line: usize,
+    pub column: usize,
+    pub text: String,
+}
+
+impl std::fmt::Display for SearchMatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{} {}",
+            self.path.display(),
+            self.line,
+            self.column,
+            self.text
+        )
+    }
 }
 
 impl std::fmt::Display for Command {
